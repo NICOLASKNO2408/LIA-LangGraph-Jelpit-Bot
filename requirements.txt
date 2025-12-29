@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-dotenv
+google-cloud-firestore
+google-genai
+langgraph
+gspread
+google-api-python-client
+google-auth
+requests
+pytz
