@@ -48,28 +48,16 @@ def limpiar_respuesta_json(texto_respuesta):
     Intenta extraer JSON válido usando Regex, ignorando texto extra o errores de formato markdown.
     """
     try:
-        # 1. Si viene vacío o nulo
         if not texto_respuesta: return {}
-
-        # 2. Búsqueda quirúrgica: Encuentra lo que esté entre llaves { ... }
-        # re.DOTALL permite que el punto (.) coincida con saltos de línea
         match = re.search(r'\{.*\}', texto_respuesta, re.DOTALL)
-        
         if match:
             json_str = match.group(0)
         else:
-            # Si no encuentra llaves, intentamos limpiar a la fuerza
             json_str = texto_respuesta
-
-        # 3. Limpieza de artefactos Markdown comunes
         json_str = json_str.replace("```json", "").replace("```", "").strip()
-        
-        # 4. Intento de carga
         return json.loads(json_str)
-
     except Exception as e:
         print(f"⚠️ ERROR CRÍTICO PARSEANDO JSON: {e}")
-        print(f"Texto recibido corrupto: {texto_respuesta}")
         return {}
     
 def generar_codigo_solicitud():
@@ -117,6 +105,7 @@ def guardar_lead_sheet(datos_lead, info_cliente, asesor_asignado, fecha_cita):
                 fecha_cita_formateada = dt_obj.strftime("%d/%m/%Y %H:%M:%S")
             except ValueError: fecha_cita_formateada = fecha_cita
         
+        # AJUSTE AQUÍ: Usamos 'or "Pendiente"' para manejar los datos faltantes
         mapa_fila = {
             'A': fecha_radicacion,
             'B': id_unico,
@@ -127,8 +116,8 @@ def guardar_lead_sheet(datos_lead, info_cliente, asesor_asignado, fecha_cita):
             'AE': info_cliente['email'],
             'AD': info_cliente['telefono'],
             'AG': info_cliente['conjunto'],
-            'AL': datos_lead.get('inmuebles', 'N/A'), 
-            'AM': datos_lead.get('nivel_fondo', 'N/A'),
+            'AL': datos_lead.get('inmuebles') or "Pendiente", # Evita celdas vacías
+            'AM': datos_lead.get('nivel_fondo') or "Pendiente", # Evita celdas vacías
             'D': asesor_asignado,
             'BA': fecha_cita_formateada 
         }
@@ -233,45 +222,28 @@ def seleccionar_mejor_asesor(cliente_data):
     """
     Selecciona al asesor. 
     Actualmente usa el Default para pruebas.
-    Descomentar el bloque para activar la inteligencia de Sheets.
     """
-    print(f"🔄 Seleccionando asesor para cliente con {cliente_data.get('inmuebles')} inmuebles...")
-
-    # --- 🔽 BLOQUE LÓGICA REAL (COMENTADO PARA PRUEBAS) 🔽 ---
+    print(f"🔄 Seleccionando asesor...")
     # agente_inteligente = obtener_mejor_agente()
-    # if agente_inteligente:
-    #     return agente_inteligente
-    # ---------------------------------------------------------
-    
+    # if agente_inteligente: return agente_inteligente
     print(f"⚠️ Usando Asesor Default (Pruebas): {CORREO_ASESOR_DEFAULT}")
     return CORREO_ASESOR_DEFAULT
 
 def validar_es_festivo(fecha_str):
-    """
-    Consulta api-colombia.com para ver si la fecha es festiva.
-    Retorna: (True, "Nombre del Festivo") o (False, None)
-    """
     print(f"🎉 Verificando si {fecha_str} es festivo en Colombia...")
     try:
         year = fecha_str.split("-")[0]
-        
         url = f"https://api-colombia.com/api/v1/Holiday/year/{year}"
-        
         response = requests.get(url, timeout=5)
-        if response.status_code != 200:
-            return False, None
-            
+        if response.status_code != 200: return False, None
         festivos = response.json()
-        
         for festivo in festivos:
             fecha_api = festivo.get("date", "")
             if fecha_api.startswith(fecha_str):
                 nombre_festivo = festivo.get("name", "Festivo Nacional")
                 print(f"🚫 Es festivo: {nombre_festivo}")
                 return True, nombre_festivo
-                
         return False, None
-
     except Exception as e:
         print(f"⚠️ Error consultando API Festivos: {e}")
         return False, None
@@ -305,10 +277,8 @@ def crear_evento_calendar(asesor_email, cliente_email, cliente_nombre, fecha_ini
         return False
 
 def obtener_cupos_por_fecha(fecha_str, asesor_email):
-    # Retorna una tupla: (Mensaje_Texto, Lista_Slots_Cruda)
     es_festivo, nombre_festivo = validar_es_festivo(fecha_str)
-    if es_festivo:
-        return f"ES FESTIVO: {nombre_festivo}", []
+    if es_festivo: return f"ES FESTIVO: {nombre_festivo}", []
     
     print(f"\n🗓️ Analizando agenda BLINDADA para {fecha_str}")
     if not os.path.exists(TOKEN_FILE): return "Error Token", []
@@ -321,11 +291,9 @@ def obtener_cupos_por_fecha(fecha_str, asesor_email):
         fecha_dt = datetime.strptime(fecha_str, "%Y-%m-%d")
         dia_semana = fecha_dt.weekday()
 
-        if dia_semana == 6:
-            return "NO DISPONIBLE (DOMINGO)", []
+        if dia_semana == 6: return "NO DISPONIBLE (DOMINGO)", []
         
         hora_cierre_hoy = 12 if dia_semana == 5 else HORA_FIN
-
         inicio_dia = bogota_tz.localize(datetime.combine(fecha_dt, datetime.min.time()))
         fin_dia = bogota_tz.localize(datetime.combine(fecha_dt, datetime.max.time()))
 
@@ -366,7 +334,6 @@ def obtener_cupos_por_fecha(fecha_str, asesor_email):
                         break
                 
                 if not ocupado:
-                    # Guardamos formato limpio para comparación exacta
                     slots_disponibles.append(curr.strftime('%I:%M %p').lower())
 
             curr = slot_end
@@ -375,7 +342,7 @@ def obtener_cupos_por_fecha(fecha_str, asesor_email):
             nombres_dias = {0:'Lunes', 1:'Martes', 2:'Miércoles', 3:'Jueves', 4:'Viernes', 5:'Sábado', 6:'Domingo'}
             nombre_dia = nombres_dias[dia_semana]
             mensaje = f"CUPOS DISPONIBLES ({nombre_dia} {fecha_dt.day}):\n" + "\n".join([f"✅ {s}" for s in slots_disponibles])
-            return mensaje, slots_disponibles # <--- AQUÍ RETORNAMOS LA LISTA TAMBIÉN
+            return mensaje, slots_disponibles
         else: 
             return "AGENDA LLENA", []
 

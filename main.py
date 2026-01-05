@@ -23,7 +23,7 @@ except Exception as e:
     print(f"❌ Error conectando a Firestore: {e}")
     db = None
 
-app = FastAPI(title="LIA LangGraph API", version="2.1.0")
+app = FastAPI(title="LIA LangGraph API", version="2.6.0") # Actualizamos versión
 
 class LeadData(BaseModel):
     nombre: str
@@ -80,7 +80,6 @@ def save_state_to_firestore(session_id: str, state: LiaState):
         del state_to_save["analisis_temp"]
     
     # --- AJUSTE 3: GUARDAR LINK Y ID EN LA RAÍZ DEL DOCUMENTO ---
-    # Extraemos los datos de la cita si existen para que sean fáciles de leer en DB
     if state_to_save.get("cita_agendada"):
         cita = state_to_save["cita_agendada"]
         state_to_save["idMeet"] = cita.get("id")
@@ -100,14 +99,17 @@ async def start_chat_session(request: StartSessionRequest):
         state["info_cliente"] = request.lead_data.model_dump()
         state["email_usuario"] = request.lead_data.email
         
+        # --- AJUSTE 1: SALUDO CONTEXTUAL (JELPIT) ---
+        # Este prompt conecta con el botón "Sí, me interesa" de la imagen.
         prompt_arranque = """
-        [SISTEMA] El cliente viene de un botón 'Me interesa'. 
-        YA SABE QUIÉN ERES. NO te presentes.
-        Tu tarea inmediata es:
-        1. Decir: "¡Claro que sí! Con gusto te cuento sobre los beneficios..."
-        2. Listar los beneficios clave (Conciliación 15min, Plataforma Gratis, Cero Costos).
-        3. Entregar el link: [http://bit.ly/49GcPKr](http://bit.ly/49GcPKr)
-        4. Terminar preguntando: "¿Cuando termines de validar la información, te interesa agendar una sesión virtual con uno de nuestros asesores especializados?"
+        [SISTEMA] El cliente acaba de ver la imagen del portafolio y presionó el botón 'Sí, me interesa'.
+        
+        TU INSTRUCCIÓN OBLIGATORIA DE INICIO:
+        1. NO saludes con "Hola" (ya vienes hablando).
+        2. Tu primera frase DEBE SER TEXTUALMENTE (puedes variar emojis): 
+           "¡Me encanta que estés interesado! 🌟 Te cuento que *Jelpit* es el ecosistema experto en propiedad horizontal del Banco Davivienda..."
+        3. Conecta explicando brevemente que Jelpit agrupa conciliación, pagos y beneficios.
+        4. Cierra preguntando: "¿Te gustaría conocer más detalles o prefieres que miremos disponibilidad para una sesión virtual con uno de nuestros agentes especializados?"
         """
         
         state["messages"] = [{"role": "user", "parts": [prompt_arranque]}]
@@ -162,5 +164,5 @@ async def reject_initial(request: RejectRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 LIA V2.1 (Ajustes Festivos + DB) INICIANDO...")
+    print("🚀 LIA V2.6 (Ajustes Jelpit + DB) INICIANDO...")
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
