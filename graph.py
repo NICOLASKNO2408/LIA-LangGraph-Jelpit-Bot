@@ -81,10 +81,10 @@ def gestionar_logica(state: LiaState):
     cita_agendada_data = cita_agendada_prev
 
     # -----------------------------------------------------------------
-    # CASO ESPECIAL: Cita ya agendada -> El usuario responde preguntas finales
+    # CASO ESPECIAL: Cita ya agendada -> Cierre y Guardado Final
     # -----------------------------------------------------------------
     if cita_agendada_prev:
-        # Intentamos extraer datos si el usuario los dio ahora
+        # 1. Intentamos extraer datos si el usuario los dio ahora
         datos_lead_extracted = analisis.get("datos_lead", {})
         hubo_actualizacion = False
         
@@ -97,30 +97,28 @@ def gestionar_logica(state: LiaState):
             datos_lead["nivel_fondo"] = "menor" if "menor" in val.lower() else "mayor"
             hubo_actualizacion = True
         
-        # AJUSTE 2 (PARTE A): Si actualizó datos o se despide, AHORA SÍ GUARDAMOS
-        if hubo_actualizacion or analisis.get("es_rechazo") or "gracias" in state["messages"][-1]["parts"][0].lower():
-            info_final = state["info_cliente"].copy()
-            info_final["email"] = email_usuario
-            
-            # Recuperamos la fecha de la cita que ya estaba agendada
-            fecha_cita_guardar = state.get("fecha_cita_final")
-            # Si se había perdido del estado plano, intentamos sacarla del objeto cita
-            if not fecha_cita_guardar and cita_agendada_prev:
-                 # Esto es un fallback por si acaso, aunque fecha_cita_final debería persistir
-                 pass 
-
-            # AQUÍ ES DONDE SE GUARDA EL REGISTRO FINAL COMPLETO
-            tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_cita_guardar)
-
-            return {
-                "conversation_status": "finished",
-                "datos_lead": datos_lead,
-                "system_context_instruction": "[SISTEMA] Datos finales recibidos y guardados. Agradece, recuerda la fecha de la cita y despídete amablemente."
-            }
+        # 2. GUARDADO OBLIGATORIO (SOLUCIÓN AL ERROR)
+        # Como ya se agendó la cita y estamos en el paso final, GUARDAMOS SIEMPRE.
+        # Si el usuario dijo "no tengo info", guardará con lo que tenga (Pendiente).
+        info_final = state["info_cliente"].copy()
+        info_final["email"] = email_usuario
+        fecha_cita_guardar = state.get("fecha_cita_final")
         
+        tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_cita_guardar)
+
+        # 3. Definir mensaje de despedida según lo que pasó
+        if hubo_actualizacion:
+            instruccion = "[SISTEMA] Datos recibidos. Agradece, recuerda la fecha y despídete."
+        elif analisis.get("es_rechazo"):
+            instruccion = "[SISTEMA] El usuario indicó no estar interesado en dar más datos. Despídete amablemente recordando la cita."
+        else:
+            # Caso "No tengo información" o "Gracias"
+            instruccion = "[SISTEMA] El usuario no tiene la información o se está despidiendo. Dile que no se preocupe, que todo está listo para la cita y despídete."
+
         return {
             "conversation_status": "finished",
-            "system_context_instruction": "[SISTEMA] Cita confirmada. Despídete cordialmente."
+            "datos_lead": datos_lead,
+            "system_context_instruction": instruccion
         }
 
     # -----------------------------------------------------------------
@@ -198,7 +196,7 @@ def gestionar_logica(state: LiaState):
                 info_final["email"] = email_usuario
                 cita_agendada_data = evt
                 
-                # --- AJUSTE 2 (PARTE B): LÓGICA DE GUARDADO CONDICIONAL ---
+                # --- LÓGICA DE GUARDADO CONDICIONAL ---
                 if completos:
                     # CASO 1: YA TENEMOS TODO -> Guardamos YA y nos despedimos.
                     tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_final_cita)
@@ -206,10 +204,8 @@ def gestionar_logica(state: LiaState):
                     contexto_extra = f"[SISTEMA] Cita creada ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
                 else:
                     # CASO 2: FALTAN DATOS -> NO GUARDAMOS EN SHEETS TODAVÍA.
-                    # Esperamos al siguiente turno para guardar el registro completo.
+                    # Mantenemos el chat abierto para intentar capturar los datos en el siguiente turno.
                     status = "continue"
-                    
-                    # --- AJUSTE 1: FRASE CORREGIDA "FONDO DE IMPREVISTOS" ---
                     contexto_extra = (
                         f"\n[SISTEMA: ✅ Cita creada EXITOSAMENTE en Calendar]. "
                         f"INSTRUCCIÓN OBLIGATORIA (NO TE DESPIDAS): "
