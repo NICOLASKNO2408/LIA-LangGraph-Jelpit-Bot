@@ -239,7 +239,7 @@ def gestionar_logica(state: LiaState):
                         f"\n[SISTEMA: ✅ Cita creada EXITOSAMENTE en Calendar]. "
                         f"INSTRUCCIÓN OBLIGATORIA (NO TE DESPIDAS): "
                         f"1. Confirma la cita y el envío a {email_usuario}. "
-                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el **fondo de imprevistos** supera los 45M?'"
+                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el fondo de imprevistos supera los 45M?'"
                     )
                 
                 esperando_email = False

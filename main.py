@@ -118,7 +118,7 @@ async def start_chat_session(request: StartSessionRequest):
                ✅ Portal transaccional gratuito.
                ✅ Descuentos en medios de pago de hasta 100%.
                ✅ Plataforma Jelpit SIN COSTO.
-            4. CIERRE: "Ofrecemos tarifas especiales. ¿Qué tal si agendamos una cita de **30 min** para cotizar a tu medida?"
+            4. CIERRE: "Ofrecemos tarifas especiales. ¿Qué tal si agendamos una cita de *30 min* para cotizar a tu medida?"
             5. IMPORTANTE: Pregunta sutilmente: "¿Hay algo puntual que te detenga (precio, otro proveedor)?"
             """
         else:
