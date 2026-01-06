@@ -1,5 +1,6 @@
 import re
 import os
+import traceback
 from datetime import datetime
 from langgraph.graph import StateGraph, START, END
 from google import genai
@@ -11,6 +12,14 @@ import utils
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 LOCATION = os.getenv("GCP_LOCATION")
+
+# --- OPTIMIZACIÓN: CLIENTE GLOBAL (Se conecta una sola vez) ---
+try:
+    client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+    print("✅ Cliente Gemini (Graph) inicializado correctamente.")
+except Exception as e:
+    print(f"❌ Error inicializando Gemini: {e}")
+    client = None
 
 # --- NODO 1: ANÁLISIS ---
 def analizar_input(state: LiaState):
@@ -36,6 +45,7 @@ def analizar_input(state: LiaState):
     # 3. Preparar historial
     hist_txt = "\n".join([f"{m['role']}: {m['parts'][0]}" for m in state["messages"][-6:]])
 
+    # Pasamos el cliente global a utils para optimizar también el análisis
     analisis = utils.analizar_contexto_unificado(
         user_message=user_message,
         history_text=hist_txt,
@@ -43,7 +53,8 @@ def analizar_input(state: LiaState):
         email_actual=email_actual,
         esperando_email=state.get("esperando_confirmacion_email"),
         project_id=PROJECT_ID,
-        location=LOCATION
+        location=LOCATION,
+        client_existente=client # <--- NUEVO ARGUMENTO
     )
 
     updates = {
@@ -73,7 +84,7 @@ def gestionar_logica(state: LiaState):
     fecha_final_cita = state.get("fecha_cita_final")
     cita_agendada_prev = state.get("cita_agendada") 
     
-    # Persistencia del motivo de rechazo (Para no perderlo si el usuario corta el chat)
+    # Persistencia del motivo de rechazo
     motivo_nuevo = analisis.get("motivo_rechazo")
     motivo_previo = state.get("motivo_rechazo")
     motivo_actualizado = motivo_nuevo if motivo_nuevo else motivo_previo
@@ -89,7 +100,6 @@ def gestionar_logica(state: LiaState):
     # CASO ESPECIAL: Cita ya agendada -> CIERRE Y GUARDADO FINAL
     # -----------------------------------------------------------------
     if cita_agendada_prev:
-        # Intentamos extraer datos si el usuario los dio ahora
         datos_lead_extracted = analisis.get("datos_lead", {})
         hubo_actualizacion = False
         
@@ -102,22 +112,18 @@ def gestionar_logica(state: LiaState):
             datos_lead["nivel_fondo"] = "menor" if "menor" in val.lower() else "mayor"
             hubo_actualizacion = True
         
-        # --- CORRECCIÓN CRÍTICA ---
-        # Guardamos SIEMPRE. Si el usuario dijo "no tengo info", se guardará con "Pendiente" (gracias a tools.py)
-        # pero garantizamos que el registro se cree en el sheet.
+        # Guardado obligatorio
         info_final = state["info_cliente"].copy()
         info_final["email"] = email_usuario
         fecha_cita_guardar = state.get("fecha_cita_final")
         
         tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_cita_guardar)
 
-        # Definimos la despedida según lo que pasó
         if hubo_actualizacion:
             instruccion = "[SISTEMA] Datos recibidos. Agradece, recuerda la fecha y despídete."
         elif analisis.get("es_rechazo"):
             instruccion = "[SISTEMA] El usuario indicó no estar interesado en dar más datos. Despídete amablemente recordando la cita."
         else:
-            # Caso: "No tengo información" o "Gracias"
             instruccion = "[SISTEMA] El usuario no tiene la información o se está despidiendo. Dile que no se preocupe, que todo está listo para la cita y despídete."
 
         return {
@@ -128,7 +134,7 @@ def gestionar_logica(state: LiaState):
         }
 
     # -----------------------------------------------------------------
-    # FLUJO PRINCIPAL (Antes de tener cita confirmada)
+    # FLUJO PRINCIPAL
     # -----------------------------------------------------------------
 
     # A.1 RECHAZO DEFINITIVO
@@ -141,15 +147,14 @@ def gestionar_logica(state: LiaState):
             "system_context_instruction": "El usuario rechazó tajantemente. Despídete."
         }
     
-    # A.2 OBJECIÓN RECUPERABLE (Estrategia Persuasión)
+    # A.2 OBJECIÓN RECUPERABLE
     if analisis.get("es_objecion_recuperable"):
         contexto_extra = (
             "\n[SISTEMA] EL USUARIO TIENE DUDAS. NO CIERRES EL CHAT.\n"
             "INSTRUCCIÓN: Aplica la 'ESTRATEGIA DE RECUPERACIÓN'. Invítalo a vivir la experiencia Jelpit."
         )
-        # Nota: No cambiamos status a 'finished', dejamos que continue.
 
-    # B. ACTUALIZAR DATOS (Recolección pasiva)
+    # B. ACTUALIZAR DATOS
     datos_lead_extracted = analisis.get("datos_lead", {})
     if datos_lead_extracted.get("tiene_inmuebles"):
         datos_lead["inmuebles"] = str(datos_lead_extracted.get("valor_inmuebles"))
@@ -180,7 +185,6 @@ def gestionar_logica(state: LiaState):
                 fecha_texto_claro = f"{dias_es[dt_obj.weekday()]} {dt_obj.day}"
             except: fecha_texto_claro = fecha_iso
 
-            # --- MENSAJES PERSONALIZADOS (DOMINGO/FESTIVO) ---
             if msg_cupos.startswith("ES FESTIVO"):
                 contexto_extra = (
                     f"\n[SISTEMA: La fecha {fecha_texto_claro} es FESTIVO]. "
@@ -217,7 +221,6 @@ def gestionar_logica(state: LiaState):
             confirmado = True
             
         if confirmado and fecha_final_cita:
-            # CREAR EVENTO
             evt = tools.crear_evento_calendar(asesor, email_usuario, state["info_cliente"]["nombre"], fecha_final_cita)
             
             if evt:
@@ -225,21 +228,17 @@ def gestionar_logica(state: LiaState):
                 info_final["email"] = email_usuario
                 cita_agendada_data = evt
                 
-                # --- LÓGICA DE GUARDADO CONDICIONAL ---
                 if completos:
-                    # CASO 1: YA TENEMOS TODO -> Guardamos YA y nos despedimos.
                     tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_final_cita)
                     status = "finished"
                     contexto_extra = f"[SISTEMA] Cita creada ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
                 else:
-                    # CASO 2: FALTAN DATOS -> NO GUARDAMOS EN SHEETS TODAVÍA.
-                    # Mantenemos el chat abierto para intentar capturar los datos en el siguiente turno.
                     status = "continue"
                     contexto_extra = (
                         f"\n[SISTEMA: ✅ Cita creada EXITOSAMENTE en Calendar]. "
                         f"INSTRUCCIÓN OBLIGATORIA (NO TE DESPIDAS): "
                         f"1. Confirma la cita y el envío a {email_usuario}. "
-                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el fondo de imprevistos supera los 45M?'"
+                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el **fondo de imprevistos** supera los 45M?'"
                     )
                 
                 esperando_email = False
@@ -308,19 +307,28 @@ def gestionar_logica(state: LiaState):
     }
 
 def generar_respuesta(state: LiaState):
-    client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+    # --- OPTIMIZACIÓN: USAMOS EL CLIENTE GLOBAL ---
     system_instr = utils.generar_system_instruction(state["info_cliente"].get("nombre", "Usuario"))
     contexto_sistema = state.get("system_context_instruction", "")
+    
     gemini_msgs = []
     for m in state["messages"]:
         gemini_msgs.append(types.Content(role=m["role"], parts=[types.Part.from_text(text=str(m["parts"][0]))]))
-    if contexto_sistema: gemini_msgs[-1].parts[0].text += f"\n{contexto_sistema}"
+    
+    if contexto_sistema: 
+        gemini_msgs[-1].parts[0].text += f"\n{contexto_sistema}"
     
     config = types.GenerateContentConfig(temperature=0.3, max_output_tokens=1024, system_instruction=system_instr)
+    
     try:
+        # Usamos 'client' (variable global ya inicializada)
         resp = client.models.generate_content(model="gemini-2.0-flash-lite-001", contents=gemini_msgs, config=config)
         text_resp = resp.text.replace("```", "").strip()
-    except: text_resp = "Error de conexión."
+    except Exception as e:
+        print(f"❌ Error Generando Respuesta (Gemini): {e}") # Log del error real
+        traceback.print_exc()
+        # Mensaje amigable para el usuario
+        text_resp = "Dame un momento, estoy verificando la información... ⏳"
     
     return {"messages": [{"role": "model", "parts": [text_resp]}], "system_context_instruction": ""}
 

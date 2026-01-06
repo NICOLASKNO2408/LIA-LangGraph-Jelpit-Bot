@@ -152,9 +152,15 @@ Dado que este chat se lee en WhatsApp, debes seguir estas reglas de diseño:
 * Confirma correo, confirma fecha/hora y despídete.
 """
 
-def analizar_contexto_unificado(user_message: str, history_text: str, fecha_contexto: str, email_actual: str, esperando_email: bool, project_id: str, location: str):
-    # Inicializamos cliente Gemini aquí para que sea independiente
-    client = genai.Client(vertexai=True, project=project_id, location=location)
+# CAMBIO AQUÍ: Agregamos el parámetro 'client_existente' para recibir el cliente global
+def analizar_contexto_unificado(user_message: str, history_text: str, fecha_contexto: str, email_actual: str, esperando_email: bool, project_id: str, location: str, client_existente=None):
+    
+    # OPTIMIZACIÓN: Si nos pasan el cliente (desde graph.py), lo usamos.
+    if client_existente:
+        client = client_existente
+    else:
+        # Fallback por si acaso (no debería usarse si graph.py está bien)
+        client = genai.Client(vertexai=True, project=project_id, location=location)
     
     tz = pytz.timezone('America/Bogota')
     now = datetime.now(tz)
