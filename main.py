@@ -23,7 +23,7 @@ except Exception as e:
     print(f"❌ Error conectando a Firestore: {e}")
     db = None
 
-app = FastAPI(title="LIA LangGraph API", version="2.6.0") # Actualizamos versión
+app = FastAPI(title="LIA LangGraph API", version="2.8.0") # Versión Fusionada Final
 
 class LeadData(BaseModel):
     nombre: str
@@ -34,6 +34,8 @@ class LeadData(BaseModel):
 class StartSessionRequest(BaseModel):
     session_id: str
     lead_data: LeadData
+    # Campo nuevo para la estrategia de rechazo (por defecto 'interested')
+    initial_intent: str = "interested" 
 
 class SendMessageRequest(BaseModel):
     session_id: str
@@ -79,7 +81,7 @@ def save_state_to_firestore(session_id: str, state: LiaState):
     if "analisis_temp" in state_to_save:
         del state_to_save["analisis_temp"]
     
-    # --- AJUSTE 3: GUARDAR LINK Y ID EN LA RAÍZ DEL DOCUMENTO ---
+    # Guardar datos de la cita en raíz para fácil lectura
     if state_to_save.get("cita_agendada"):
         cita = state_to_save["cita_agendada"]
         state_to_save["idMeet"] = cita.get("id")
@@ -99,18 +101,38 @@ async def start_chat_session(request: StartSessionRequest):
         state["info_cliente"] = request.lead_data.model_dump()
         state["email_usuario"] = request.lead_data.email
         
-        # --- AJUSTE 1: SALUDO CONTEXTUAL (JELPIT) ---
-        # Este prompt conecta con el botón "Sí, me interesa" de la imagen.
-        prompt_arranque = """
-        [SISTEMA] El cliente acaba de ver la imagen del portafolio y presionó el botón 'Sí, me interesa'.
+        # --- LÓGICA DE SELECCIÓN DE PROMPT ---
         
-        TU INSTRUCCIÓN OBLIGATORIA DE INICIO:
-        1. NO saludes con "Hola" (ya vienes hablando).
-        2. Tu primera frase DEBE SER TEXTUALMENTE (puedes variar emojis): 
-           "¡Me encanta que estés interesado! 🌟 Te cuento que *Jelpit* es el ecosistema experto en propiedad horizontal del Banco Davivienda..."
-        3. Conecta explicando brevemente que Jelpit agrupa conciliación, pagos y beneficios.
-        4. Cierra preguntando: "¿Te gustaría conocer más detalles o prefieres que miremos disponibilidad para una sesión virtual con uno de nuestros agentes especializados?"
-        """
+        if request.initial_intent == "rejected":
+            # CASO B: USUARIO DIJO "NO ME INTERESA" (PERSUASIÓN)
+            # Ajustes aplicados: Duración 30 min + Indagar Motivo
+            prompt_arranque = """
+            [SISTEMA] El usuario hizo clic en 'No me interesa'. 
+            TU OBJETIVO: Persuadir amablemente e indagar el motivo del rechazo.
+            
+            INSTRUCCIONES DE INICIO (ESTRICTAS):
+            1. NO saludes con "Hola".
+            2. Di algo empático. Argumento base:
+               "Entiendo que de entrada no te suene, ¡pero espera! ✋ Seguro esto te interesa. Te invito a vivir la experiencia Jelpit Davivienda..."
+            3. MENCIONA BENEFICIOS (Lista con Emojis para WhatsApp):
+               ✅ Portal transaccional gratuito.
+               ✅ Descuentos en medios de pago de hasta 100%.
+               ✅ Plataforma Jelpit SIN COSTO.
+            4. CIERRE: "Ofrecemos tarifas especiales. ¿Qué tal si agendamos una cita de **30 min** para cotizar a tu medida?"
+            5. IMPORTANTE: Pregunta sutilmente: "¿Hay algo puntual que te detenga (precio, otro proveedor)?"
+            """
+        else:
+            # CASO A: USUARIO DIJO "SÍ ME INTERESA" (TU LÓGICA ORIGINAL)
+            prompt_arranque = """
+            [SISTEMA] El cliente acaba de ver la imagen del portafolio y presionó el botón 'Sí, me interesa'.
+            
+            TU INSTRUCCIÓN OBLIGATORIA DE INICIO:
+            1. NO saludes con "Hola" (ya vienes hablando).
+            2. Tu primera frase DEBE SER TEXTUALMENTE (puedes variar emojis): 
+               "¡Me encanta que estés interesado! 🌟 Te cuento que *Jelpit* es el ecosistema experto en propiedad horizontal del Banco Davivienda..."
+            3. Conecta explicando brevemente que Jelpit agrupa conciliación, pagos y beneficios.
+            4. Cierra preguntando: "¿Te gustaría conocer más detalles o prefieres que miremos disponibilidad para una sesión virtual con uno de nuestros agentes especializados?"
+            """
         
         state["messages"] = [{"role": "user", "parts": [prompt_arranque]}]
         final_state = app_graph.invoke(state)
@@ -155,6 +177,8 @@ async def send_message(request: SendMessageRequest):
 
 @app.post("/chat/reject")
 async def reject_initial(request: RejectRequest):
+    # Este endpoint queda activo para compatibilidad, 
+    # aunque Infobip ahora usará /chat/start con 'rejected'
     try:
         info_cliente = request.lead_data.model_dump()
         tools.guardar_no_interesado_sheet(info_cliente, request.reason)
@@ -164,5 +188,5 @@ async def reject_initial(request: RejectRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 LIA V2.6 (Ajustes Jelpit + DB) INICIANDO...")
+    print("🚀 LIA V2.8 (Fusionada y Corregida) INICIANDO...")
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))

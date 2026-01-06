@@ -73,6 +73,11 @@ def gestionar_logica(state: LiaState):
     fecha_final_cita = state.get("fecha_cita_final")
     cita_agendada_prev = state.get("cita_agendada") 
     
+    # Persistencia del motivo de rechazo (Para no perderlo si el usuario corta el chat)
+    motivo_nuevo = analisis.get("motivo_rechazo")
+    motivo_previo = state.get("motivo_rechazo")
+    motivo_actualizado = motivo_nuevo if motivo_nuevo else motivo_previo
+    
     if not email_usuario:
         email_usuario = state["info_cliente"].get("email", "tu correo")
 
@@ -81,10 +86,10 @@ def gestionar_logica(state: LiaState):
     cita_agendada_data = cita_agendada_prev
 
     # -----------------------------------------------------------------
-    # CASO ESPECIAL: Cita ya agendada -> Cierre y Guardado Final
+    # CASO ESPECIAL: Cita ya agendada -> CIERRE Y GUARDADO FINAL
     # -----------------------------------------------------------------
     if cita_agendada_prev:
-        # 1. Intentamos extraer datos si el usuario los dio ahora
+        # Intentamos extraer datos si el usuario los dio ahora
         datos_lead_extracted = analisis.get("datos_lead", {})
         hubo_actualizacion = False
         
@@ -97,27 +102,28 @@ def gestionar_logica(state: LiaState):
             datos_lead["nivel_fondo"] = "menor" if "menor" in val.lower() else "mayor"
             hubo_actualizacion = True
         
-        # 2. GUARDADO OBLIGATORIO (SOLUCIÓN AL ERROR)
-        # Como ya se agendó la cita y estamos en el paso final, GUARDAMOS SIEMPRE.
-        # Si el usuario dijo "no tengo info", guardará con lo que tenga (Pendiente).
+        # --- CORRECCIÓN CRÍTICA ---
+        # Guardamos SIEMPRE. Si el usuario dijo "no tengo info", se guardará con "Pendiente" (gracias a tools.py)
+        # pero garantizamos que el registro se cree en el sheet.
         info_final = state["info_cliente"].copy()
         info_final["email"] = email_usuario
         fecha_cita_guardar = state.get("fecha_cita_final")
         
         tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_cita_guardar)
 
-        # 3. Definir mensaje de despedida según lo que pasó
+        # Definimos la despedida según lo que pasó
         if hubo_actualizacion:
             instruccion = "[SISTEMA] Datos recibidos. Agradece, recuerda la fecha y despídete."
         elif analisis.get("es_rechazo"):
             instruccion = "[SISTEMA] El usuario indicó no estar interesado en dar más datos. Despídete amablemente recordando la cita."
         else:
-            # Caso "No tengo información" o "Gracias"
+            # Caso: "No tengo información" o "Gracias"
             instruccion = "[SISTEMA] El usuario no tiene la información o se está despidiendo. Dile que no se preocupe, que todo está listo para la cita y despídete."
 
         return {
             "conversation_status": "finished",
             "datos_lead": datos_lead,
+            "motivo_rechazo": motivo_actualizado,
             "system_context_instruction": instruccion
         }
 
@@ -125,15 +131,23 @@ def gestionar_logica(state: LiaState):
     # FLUJO PRINCIPAL (Antes de tener cita confirmada)
     # -----------------------------------------------------------------
 
-    # A. RECHAZO
+    # A.1 RECHAZO DEFINITIVO
     if analisis.get("es_rechazo"):
-        motivo = analisis.get("motivo_rechazo", "Desinterés")
-        tools.guardar_no_interesado_sheet(state["info_cliente"], motivo)
+        motivo_final = motivo_actualizado if motivo_actualizado else "Desinterés"
+        tools.guardar_no_interesado_sheet(state["info_cliente"], motivo_final)
         return {
             "conversation_status": "finished",
-            "motivo_rechazo": motivo,
-            "system_context_instruction": "El usuario rechazó. Despídete."
+            "motivo_rechazo": motivo_final,
+            "system_context_instruction": "El usuario rechazó tajantemente. Despídete."
         }
+    
+    # A.2 OBJECIÓN RECUPERABLE (Estrategia Persuasión)
+    if analisis.get("es_objecion_recuperable"):
+        contexto_extra = (
+            "\n[SISTEMA] EL USUARIO TIENE DUDAS. NO CIERRES EL CHAT.\n"
+            "INSTRUCCIÓN: Aplica la 'ESTRATEGIA DE RECUPERACIÓN'. Invítalo a vivir la experiencia Jelpit."
+        )
+        # Nota: No cambiamos status a 'finished', dejamos que continue.
 
     # B. ACTUALIZAR DATOS (Recolección pasiva)
     datos_lead_extracted = analisis.get("datos_lead", {})
@@ -166,8 +180,23 @@ def gestionar_logica(state: LiaState):
                 fecha_texto_claro = f"{dias_es[dt_obj.weekday()]} {dt_obj.day}"
             except: fecha_texto_claro = fecha_iso
 
-            if msg_cupos.startswith("ES FESTIVO") or msg_cupos.startswith("NO DISPONIBLE") or msg_cupos == "AGENDA LLENA":
-                contexto_extra = f"\n[SISTEMA: {fecha_texto_claro} no disponible: {msg_cupos}. Pide otro día.]"
+            # --- MENSAJES PERSONALIZADOS (DOMINGO/FESTIVO) ---
+            if msg_cupos.startswith("ES FESTIVO"):
+                contexto_extra = (
+                    f"\n[SISTEMA: La fecha {fecha_texto_claro} es FESTIVO]. "
+                    f"INSTRUCCIÓN OBLIGATORIA: Di textualmente: 'Te cuento que justo esa fecha es festivo 🇨🇴 y nuestro equipo hará una pequeña pausa para recargar baterías 🔋.' "
+                    f"Luego pregunta qué otro día le queda bien."
+                )
+                fecha_contexto = None
+            elif "DOMINGO" in msg_cupos:
+                contexto_extra = (
+                    f"\n[SISTEMA: La fecha {fecha_texto_claro} es DOMINGO]. "
+                    f"INSTRUCCIÓN OBLIGATORIA: Di textualmente: 'Te cuento que los domingos nuestro equipo toma un pequeño respiro para recargar energías 🔋 y volver con toda la actitud.' "
+                    f"Luego pregunta qué otro día le queda bien."
+                )
+                fecha_contexto = None
+            elif msg_cupos == "AGENDA LLENA":
+                contexto_extra = f"\n[SISTEMA: Agenda llena para {fecha_texto_claro}. Pide otra fecha.]"
                 fecha_contexto = None
             elif msg_cupos.startswith("Error"):
                 contexto_extra = "\n[SISTEMA: Error técnico. Pide disculpas.]"
@@ -188,7 +217,7 @@ def gestionar_logica(state: LiaState):
             confirmado = True
             
         if confirmado and fecha_final_cita:
-            # CREAR EVENTO CALENDAR
+            # CREAR EVENTO
             evt = tools.crear_evento_calendar(asesor, email_usuario, state["info_cliente"]["nombre"], fecha_final_cita)
             
             if evt:
@@ -210,7 +239,7 @@ def gestionar_logica(state: LiaState):
                         f"\n[SISTEMA: ✅ Cita creada EXITOSAMENTE en Calendar]. "
                         f"INSTRUCCIÓN OBLIGATORIA (NO TE DESPIDAS): "
                         f"1. Confirma la cita y el envío a {email_usuario}. "
-                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el fondo de imprevistos supera los 45M?'"
+                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el **fondo de imprevistos** supera los 45M?'"
                     )
                 
                 esperando_email = False
@@ -274,6 +303,7 @@ def gestionar_logica(state: LiaState):
         "fecha_cita_final": fecha_final_cita,
         "conversation_status": status,
         "cita_agendada": cita_agendada_data, 
+        "motivo_rechazo": motivo_actualizado, 
         "system_context_instruction": contexto_extra
     }
 
