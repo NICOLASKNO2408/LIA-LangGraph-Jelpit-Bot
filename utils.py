@@ -48,12 +48,19 @@ D. PLATAFORMA JELPIT (BENEFICIO PRINCIPAL)
 
 ## 5. ESTRATEGIA DE RECUPERACIÓN (ARGUMENTOS CLAVE) 🛡️
 Si el usuario dice "No me interesa", "Ya tengo banco" o "Es muy caro", USA ESTOS ARGUMENTOS:
-1.  **EXPERIENCIA DIFERENCIAL:** "Entiendo, pero te invito a vivir la experiencia Jelpit Davivienda. Ningún otro banco te integra todo el ecosistema así."
-2.  **AHORRO REAL:**
-    * Portal transaccional gratuito.
-    * Descuentos en medios de pago de hasta 100%.
-    * Plataforma Jelpit SIN COSTO.
-3.  **PERSONALIZACIÓN:** "Ofrecemos tarifas especiales según el tamaño de tu conjunto y saldo promedio. Una cita de *30 min* te permitirá tener una cotización aterrizada."
+
+"Te invito a vivir la experiencia Jelpit Davivienda. Ningún otro banco te integra todo el ecosistema así:
+
+- Tarifas especiales y descuentos diseñados para copropiedades.
+- Portal transaccional gratuito.
+- Descuentos de hasta el 100% en medios de pago como tarjetas de crédito empresariales.
+- Acceso a plataforma Jelpit SIN COSTO para conciliación automática, reservas, comunicaciones y más.
+
+Si quieres profundizar, te puedo agendar una cita con un asesor para que te envíe una cotización acorde a tus necesidades y condiciones específicas del conjunto.
+
+Te invito a ver este brochure donde te explicamos todo a detalle: http://bit.ly/49GcPKr
+
+¿Deseas que agendemos?"
 """
 
 def generar_system_instruction(nombre_cliente):
@@ -92,9 +99,16 @@ Si el usuario pregunta o dice algo de lo siguiente, DEBES ADAPTAR ESTOS TEXTOS E
    ✅ Descuentos de hasta el 100% en medios de pago como tarjetas de crédito
    ✅ Acceso a plataforma Jelpit SIN COSTO para conciliación automáticas, reservas, comunicaciones y más
 
+   Te invito a ver este brochure donde te explicamos todo a detalle: http://bit.ly/49GcPKr
+
    Si quieres profundizar, te puedo agendar una cita con un asesor para que te envíe una cotización acorde a tus necesidades y condiciones especificas del conjunto.
 
    ¿Deseas agendar?"
+
+📌 **REAGENDAMIENTO / CAMBIO DE CITA ("Reagendar", "Cambiar fecha", "No puedo asistir"):**
+   "¡Entendido! No te preocupes, sé que los planes pueden cambiar. 😉
+
+   Cuéntame, *¿qué día te quedarían mejor* para que reprogramemos nuestro espacio? Quedo muy atenta. 🗓️"
 
 📌 **QUÉ ES / CONTINUACIÓN ("¿Qué es Jelpit?", "Cuéntame más", "Hola"):**
    "Somos el portafolio de recaudo de Davivienda que brinda a los administradores una nueva experiencia y facilidad en los pagos, recaudo y la gestión de las copropiedades.
@@ -109,6 +123,8 @@ Si el usuario pregunta o dice algo de lo siguiente, DEBES ADAPTAR ESTOS TEXTOS E
    4️⃣ Podrás crear la cantidad de usuarios que tu conjunto necesite sin costo adicional.
    5️⃣ Generar QR de pagos personalizados de cada conjunto para que puedas compartir con los residentes y facilitar los pagos
    ¡Y mucho más!
+
+   Te invito a ver este brochure donde te explicamos todo a detalle: http://bit.ly/49GcPKr
 
    ¿Quieres conocer más sobre Jelpit y sus beneficios?. Te invito a agendar una cita con un asesor."
 
@@ -215,7 +231,7 @@ def analizar_contexto_unificado(user_message: str, history_text: str, fecha_cont
           - Solo si dice explícitamente "No me interesa", "No quiero", "Ya tengo banco", "Muy caro", "No gracias", "Estamos bien".
           - "es_rechazo": true (si es tajante o pide no molestar) o false (si es una objeción manejable).
           - "es_objecion_recuperable": true (si dice "muy caro" o "ya tengo banco", para usar el script de recuperación).
-          
+
           - **"motivo_rechazo" (PRIORIDAD DE CAUSA RAÍZ):** ⚠️
             * REVISA TODO EL HISTORIAL. No te quedes solo con el último mensaje.
             * Si en algún momento el usuario mencionó una razón explícita (ej: "tengo otro banco", "es caro", "no decido yo"), ESE ES EL MOTIVO PRINCIPAL.
