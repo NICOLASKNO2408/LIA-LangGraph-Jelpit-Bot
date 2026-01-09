@@ -183,14 +183,21 @@ def gestionar_logica(state: LiaState):
             "system_context_instruction": contexto_extra
         }
 
-    # B. ACTUALIZAR DATOS
+    # B. ACTUALIZAR DATOS (FASE DE CONVERSACIÓN)
     datos_lead_extracted = analisis.get("datos_lead", {})
     if datos_lead_extracted.get("tiene_inmuebles"):
         datos_lead["inmuebles"] = str(datos_lead_extracted.get("valor_inmuebles"))
+    
+    # --- CORRECCIÓN DE ERROR "NoneType" TAMBIÉN AQUÍ ---
     if datos_lead_extracted.get("respondio_fondo"):
         datos_lead["fondo_validado"] = True
-        val = datos_lead_extracted.get("nivel_fondo", "")
-        datos_lead["nivel_fondo"] = "menor" if "menor" in val.lower() else "mayor"
+        val = str(datos_lead_extracted.get("nivel_fondo") or "").lower()
+        
+        if "mayor" in val:
+            datos_lead["nivel_fondo"] = "mayor"
+        else:
+            datos_lead["nivel_fondo"] = "menor"
+    # ----------------------------------------------------
     
     completos = datos_lead["inmuebles"] and datos_lead["fondo_validado"]
 
@@ -280,22 +287,20 @@ def gestionar_logica(state: LiaState):
                 info_final["email"] = email_usuario
                 cita_agendada_data = evt
                 
-                # --- ACTUALIZACIÓN DE SHEET Y ESTADOS (CORREGIDO) ---
+                # --- ACTUALIZACIÓN DE SHEET Y ESTADOS (CORREGIDO CON EMAIL) ---
                 if sheet_id_existente:
-                    # CASO 1: Re-agendamiento (Siempre finaliza)
                     print(f"🔄 Actualizando registro en Sheet ID: {sheet_id_existente}")
-                    tools.actualizar_cita_sheet(sheet_id_existente, fecha_final_cita, asesor_actual)
+                    # AHORA PASAMOS EL EMAIL TAMBIÉN
+                    tools.actualizar_cita_sheet(sheet_id_existente, fecha_final_cita, asesor_actual, email_usuario)
                     status = "finished"
                     contexto_extra = f"[SISTEMA] Cita RE-AGENDADA ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
                 
                 elif completos:
-                    # CASO 2: Nuevo Lead COMPLETO (Finaliza)
                     tools.guardar_lead_sheet(datos_lead, info_final, asesor_actual, fecha_final_cita)
                     status = "finished"
                     contexto_extra = f"[SISTEMA] Cita creada ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
                 
                 else:
-                    # CASO 3: Nuevo Lead INCOMPLETO (Continúa y Pregunta)
                     status = "continue"
                     contexto_extra = (
                         f"\n[SISTEMA: ✅ Cita creada EXITOSAMENTE en Calendar]. "

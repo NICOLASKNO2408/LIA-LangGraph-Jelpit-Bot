@@ -108,23 +108,22 @@ async def start_chat_session(request: StartSessionRequest):
         # --- LÓGICA DE SELECCIÓN DE PROMPT ---
         
         if request.initial_intent == "rejected":
-            # CASO B: USUARIO DIJO "NO ME INTERESA" (PERSUASIÓN)
+            # CASO B: USUARIO DIJO "NO ME INTERESA" (NUEVO SCRIPT DE MERCADEO)
             prompt_arranque = """
-            [SISTEMA] El usuario hizo clic en 'No me interesa'. 
-            TU OBJETIVO: Persuadir amablemente e indagar el motivo del rechazo.
+            [SISTEMA] El usuario hizo clic en 'No me interesa'.
             
-            INSTRUCCIONES DE INICIO (ESTRICTAS):
-            1. NO saludes con "Hola".
-            2. Di algo empático. Argumento base:
-               "Entiendo que de entrada no te suene, ¡pero espera! ✋ Seguro esto te interesa. Te invito a vivir la experiencia Jelpit Davivienda..."
-            3. MENCIONA BENEFICIOS (Lista con Emojis para WhatsApp):
-               ✅ Portal transaccional gratuito.
-               ✅ Descuentos en medios de pago de hasta 100%.
-               ✅ Plataforma Jelpit SIN COSTO.
-            4. CIERRE: "Ofrecemos tarifas especiales. ¿Qué tal si agendamos una cita de *30 min* para cotizar a tu medida?"
-            5. IMPORTANTE: Pregunta sutilmente: "¿Hay algo puntual que te detenga (precio, otro proveedor)?"
+            TU INSTRUCCIÓN OBLIGATORIA DE INICIO:
+            Usa el siguiente script textual (Adaptado para abrir conversación):
+            
+            "Entiendo que para este momento no estés interesado, sin embargo, en Jelpit estaremos siempre disponibles para brindarte toda la información y atención necesaria por si decides a vincularte con nosotros. 💜
+            
+            Recuerda que en Jelpit te ofrecemos tarifas especiales y diferentes descuentos que se acomodan a tu conjunto.
+            
+            Para ampliar esta información solo debes aceptar agendar una cita con un asesor que te contará todo lo relacionado a las condiciones específicas que requieras. ✨
+            
+            ¿Hay algo puntual que te detenga (Otro proveedor, no estas buscando nada)?"
             """
-            state["recuperacion_aplicada"] = False 
+            state["recuperacion_aplicada"] = False
 
         else:
             # CASO A: USUARIO DIJO "SÍ ME INTERESA"

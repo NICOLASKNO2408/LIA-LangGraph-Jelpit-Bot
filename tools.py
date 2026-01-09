@@ -350,8 +350,8 @@ def obtener_cupos_por_fecha(fecha_str, asesor_email):
         print(f"❌ Error obteniendo cupos: {e}")
         return "Error técnico verificando agenda.", []
     
-def actualizar_cita_sheet(id_unico, nueva_fecha, asesor):
-    print(f"\n🔄 Actualizando cita para ID: {id_unico}")
+def actualizar_cita_sheet(id_unico, nueva_fecha, asesor, nuevo_email):
+    print(f"\n🔄 Actualizando cita y email para ID: {id_unico}")
     if not os.path.exists(TOKEN_FILE): return False
     
     try:
@@ -359,19 +359,14 @@ def actualizar_cita_sheet(id_unico, nueva_fecha, asesor):
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SPREADSHEET_ID_WAREHOUSE).worksheet(SHEET_NAME_INTERESADOS)
         
-        # 1. Buscar la fila donde está el ID (Asumimos que el ID está en la Columna B)
-        # cell = sheet.find(id_unico) -> Esto puede ser lento si hay muchos datos.
-        # Mejor traemos la columna B y buscamos en memoria localmente.
-        columna_ids = sheet.col_values(2) # Columna B es índice 2 (pero en lista es index 0 start? No, col_values retorna lista strings)
+        columna_ids = sheet.col_values(2) 
         
         try:
-            # gspread col_values retorna la lista. El row será index + 1
             fila_index = columna_ids.index(id_unico) + 1 
         except ValueError:
             print("❌ ID no encontrado en el Sheet.")
             return False
             
-        # 2. Formatear la nueva fecha
         fecha_formateada = ""
         if nueva_fecha:
             try:
@@ -379,15 +374,23 @@ def actualizar_cita_sheet(id_unico, nueva_fecha, asesor):
                 fecha_formateada = dt_obj.strftime("%d/%m/%Y %H:%M:%S")
             except ValueError: fecha_formateada = nueva_fecha
             
-        # 3. Actualizar Columnas
-        # Columna 'I' (Estado) -> "Cita Reprogramada" -> Columna 9
-        # Columna 'BA' (Fecha Cita) -> Columna 53
+        # Actualizamos:
+        # Columna I (9) -> Estado
+        # Columna BA (53) -> Fecha
+        # Columna D (4) -> Asesor
+        # Columna AE (31) -> Email
         
-        sheet.update_cell(fila_index, 53, fecha_formateada)   # Col BA
-        sheet.update_cell(fila_index, 4, asesor)              # Col D (Asesor, por si cambia)
+        sheet.update_cell(fila_index, 53, fecha_formateada)   
+        sheet.update_cell(fila_index, 4, asesor)
+        sheet.update_cell(fila_index, 31, nuevo_email) # Actualizar correo
 
         print(f"✅ Sheet actualizado en fila {fila_index}")
         return True
+
+    except Exception as e:
+        print(f"❌ Error actualizando Sheet: {e}")
+        traceback.print_exc()
+        return False
 
     except Exception as e:
         print(f"❌ Error actualizando Sheet: {e}")
