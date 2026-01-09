@@ -316,7 +316,7 @@ def gestionar_logica(state: LiaState):
         else:
              contexto_extra = (
                  f"\n[SISTEMA: Debes confirmar el correo]. "
-                 f"PREGUNTA: '¿Confirmo la cita con tu correo {email_usuario} o prefieres otro?'"
+                 f"PREGUNTA: '¿Tengo este correo para enviarte la invitación {email_usuario},es correcto o prefieres otro?'"
              )
 
     # E. SELECCIÓN DE HORA
@@ -356,7 +356,7 @@ def gestionar_logica(state: LiaState):
                 contexto_extra = (
                     f"\n[SISTEMA: Hora {hora_valida} reservada]. "
                     f"INSTRUCCIÓN: '¡Perfecto! La sesión queda agendada para... "
-                    f"¿Confirmo la cita con tu correo {email_usuario} o prefieres otro?'"
+                    f"¿Tengo este correo en nuestra base de datos {email_usuario},es correcto o prefieres otro?'"
                 )
             else:
                 contexto_extra = f"\n[SISTEMA: Hora {hora_simple} ocupada. Disponibles: {slots_reales}]. Ofrece las disponibles."
