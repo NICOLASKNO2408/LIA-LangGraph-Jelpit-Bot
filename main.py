@@ -23,7 +23,7 @@ except Exception as e:
     print(f"❌ Error conectando a Firestore: {e}")
     db = None
 
-app = FastAPI(title="LIA LangGraph API", version="2.8.0") # Versión Fusionada Final
+app = FastAPI(title="LIA LangGraph API", version="2.9.1") # Versión Corrección Vida Extra
 
 class LeadData(BaseModel):
     nombre: str
@@ -34,7 +34,6 @@ class LeadData(BaseModel):
 class StartSessionRequest(BaseModel):
     session_id: str
     lead_data: LeadData
-    # Campo nuevo para la estrategia de rechazo (por defecto 'interested')
     initial_intent: str = "interested" 
 
 class SendMessageRequest(BaseModel):
@@ -44,6 +43,10 @@ class SendMessageRequest(BaseModel):
 class RejectRequest(BaseModel):
     lead_data: LeadData
     reason: str = "Clic Botón Inicial - No Interesa"
+
+class RescheduleRequest(BaseModel):
+    session_id: str
+    sheet_unique_id: str
 
 def get_empty_state() -> LiaState:
     return {
@@ -59,7 +62,8 @@ def get_empty_state() -> LiaState:
         "cita_agendada": None,
         "motivo_rechazo": None,
         "system_context_instruction": None,
-        "analisis_temp": None
+        "analisis_temp": None,
+        "recuperacion_aplicada": False
     }
 
 def load_state_from_firestore(session_id: str) -> LiaState:
@@ -105,7 +109,6 @@ async def start_chat_session(request: StartSessionRequest):
         
         if request.initial_intent == "rejected":
             # CASO B: USUARIO DIJO "NO ME INTERESA" (PERSUASIÓN)
-            # Ajustes aplicados: Duración 30 min + Indagar Motivo
             prompt_arranque = """
             [SISTEMA] El usuario hizo clic en 'No me interesa'. 
             TU OBJETIVO: Persuadir amablemente e indagar el motivo del rechazo.
@@ -121,8 +124,10 @@ async def start_chat_session(request: StartSessionRequest):
             4. CIERRE: "Ofrecemos tarifas especiales. ¿Qué tal si agendamos una cita de *30 min* para cotizar a tu medida?"
             5. IMPORTANTE: Pregunta sutilmente: "¿Hay algo puntual que te detenga (precio, otro proveedor)?"
             """
+            state["recuperacion_aplicada"] = False 
+
         else:
-            # CASO A: USUARIO DIJO "SÍ ME INTERESA" (TU LÓGICA ORIGINAL)
+            # CASO A: USUARIO DIJO "SÍ ME INTERESA"
             prompt_arranque = """
             [SISTEMA] El cliente acaba de ver la imagen del portafolio y presionó el botón 'Sí, me interesa'.
             
@@ -133,10 +138,19 @@ async def start_chat_session(request: StartSessionRequest):
             3. Conecta explicando brevemente que Jelpit agrupa conciliación, pagos y beneficios.
             4. Cierra preguntando: "¿Te gustaría conocer más detalles o prefieres que miremos disponibilidad para una sesión virtual con uno de nuestros agentes especializados?"
             """
+            state["recuperacion_aplicada"] = False
         
         state["messages"] = [{"role": "user", "parts": [prompt_arranque]}]
         final_state = app_graph.invoke(state)
         ai_response = final_state["messages"][-1]["parts"][0]
+        
+        # --- CORRECCIÓN CRÍTICA DE LÓGICA ---
+        # Si el usuario entró rechazando, el grafo ya consumió la "vida extra" (flag=True)
+        # al generar el mensaje de persuasión inicial.
+        # Debemos RESTAURARLA a False para que el usuario tenga derecho a objetar (ej: "tengo otro banco")
+        # y que el "Escudo" en graph.py intercepte ese mensaje.
+        if request.initial_intent == "rejected":
+            final_state["recuperacion_aplicada"] = False
         
         save_state_to_firestore(request.session_id, final_state)
         
@@ -177,16 +191,55 @@ async def send_message(request: SendMessageRequest):
 
 @app.post("/chat/reject")
 async def reject_initial(request: RejectRequest):
-    # Este endpoint queda activo para compatibilidad, 
-    # aunque Infobip ahora usará /chat/start con 'rejected'
     try:
         info_cliente = request.lead_data.model_dump()
         tools.guardar_no_interesado_sheet(info_cliente, request.reason)
         return {"status": "rejected", "message": "Rechazo guardado"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    
+# ... (en main.py)
+
+@app.post("/chat/reschedule")
+async def reschedule_session(request: RescheduleRequest):
+    try:
+        # 1. Cargar el estado previo (Memoria)
+        state = load_state_from_firestore(request.session_id)
+        
+        # --- CORRECCIÓN: LIMPIEZA DE ESTADO ---
+        # Reseteamos banderas negativas para evitar que el "Escudo" se active por error
+        state["recuperacion_aplicada"] = False 
+        state["motivo_rechazo"] = None
+        # ---------------------------------------
+
+        # 2. Guardar el ID del Sheet en el estado para usarlo luego
+        state["sheet_unique_id"] = request.sheet_unique_id
+        
+        # 3. Inyectar un mensaje de usuario "falso" para activar la lógica
+        mensaje_simulado = "Hola LIA, necesito reagendar mi cita que tenía programada."
+        state["messages"].append({"role": "user", "parts": [mensaje_simulado]})
+        
+        # 4. Invocar al Grafo
+        final_state = app_graph.invoke(state)
+        
+        # 5. Obtener respuesta
+        last_message = final_state["messages"][-1]
+        response_text = last_message["parts"][0]
+        
+        # 6. Guardar estado actualizado
+        save_state_to_firestore(request.session_id, final_state)
+        
+        return {
+            "response": response_text,
+            "status": final_state["conversation_status"],
+            "data": final_state["datos_lead"]
+        }
+        
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 LIA V2.8 (Fusionada y Corregida) INICIANDO...")
+    print("🚀 LIA V2.9.1 (Fix Vida Extra) INICIANDO...")
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))

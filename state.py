@@ -21,3 +21,7 @@ class LiaState(TypedDict):
     system_context_instruction: Optional[str]
 
     analisis_temp: Optional[Dict[str, Any]]
+    
+    recuperacion_aplicada: bool
+
+    sheet_unique_id: Optional[str]

@@ -349,3 +349,61 @@ def obtener_cupos_por_fecha(fecha_str, asesor_email):
     except Exception as e:
         print(f"❌ Error obteniendo cupos: {e}")
         return "Error técnico verificando agenda.", []
+    
+def actualizar_cita_sheet(id_unico, nueva_fecha, asesor):
+    print(f"\n🔄 Actualizando cita para ID: {id_unico}")
+    if not os.path.exists(TOKEN_FILE): return False
+    
+    try:
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(SPREADSHEET_ID_WAREHOUSE).worksheet(SHEET_NAME_INTERESADOS)
+        
+        # 1. Buscar la fila donde está el ID (Asumimos que el ID está en la Columna B)
+        # cell = sheet.find(id_unico) -> Esto puede ser lento si hay muchos datos.
+        # Mejor traemos la columna B y buscamos en memoria localmente.
+        columna_ids = sheet.col_values(2) # Columna B es índice 2 (pero en lista es index 0 start? No, col_values retorna lista strings)
+        
+        try:
+            # gspread col_values retorna la lista. El row será index + 1
+            fila_index = columna_ids.index(id_unico) + 1 
+        except ValueError:
+            print("❌ ID no encontrado en el Sheet.")
+            return False
+            
+        # 2. Formatear la nueva fecha
+        fecha_formateada = ""
+        if nueva_fecha:
+            try:
+                dt_obj = datetime.fromisoformat(nueva_fecha)
+                fecha_formateada = dt_obj.strftime("%d/%m/%Y %H:%M:%S")
+            except ValueError: fecha_formateada = nueva_fecha
+            
+        # 3. Actualizar Columnas
+        # Columna 'I' (Estado) -> "Cita Reprogramada" -> Columna 9
+        # Columna 'BA' (Fecha Cita) -> Columna 53
+        
+        sheet.update_cell(fila_index, 53, fecha_formateada)   # Col BA
+        sheet.update_cell(fila_index, 4, asesor)              # Col D (Asesor, por si cambia)
+
+        print(f"✅ Sheet actualizado en fila {fila_index}")
+        return True
+
+    except Exception as e:
+        print(f"❌ Error actualizando Sheet: {e}")
+        traceback.print_exc()
+        return False
+
+def eliminar_evento_calendar(event_id, asesor_email):
+    print(f"🗑️ Eliminando evento anterior {event_id} del calendario de {asesor_email}")
+    if not os.path.exists(TOKEN_FILE): return False
+    try:
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        service = build('calendar', 'v3', credentials=creds)
+        # Intentamos borrar. Si ya no existe, catch error.
+        service.events().delete(calendarId=asesor_email, eventId=event_id).execute()
+        print("✅ Evento anterior eliminado correctamente.")
+        return True
+    except Exception as e:
+        print(f"⚠️ Error eliminando evento (puede que ya no exista): {e}")
+        return False

@@ -54,7 +54,7 @@ def analizar_input(state: LiaState):
         esperando_email=state.get("esperando_confirmacion_email"),
         project_id=PROJECT_ID,
         location=LOCATION,
-        client_existente=client # <--- NUEVO ARGUMENTO
+        client_existente=client 
     )
 
     updates = {
@@ -78,12 +78,19 @@ def gestionar_logica(state: LiaState):
     # Desempaquetado
     datos_lead = state["datos_lead"].copy()
     fecha_contexto = state.get("fecha_cita_potencial")
-    asesor = state.get("asesor_asignado")
+    
+    # Capturar el asesor original antes de cualquier reasignación
+    asesor_actual = state.get("asesor_asignado")
+    asesor_original_para_borrado = asesor_actual 
+    
     esperando_email = state.get("esperando_confirmacion_email")
     email_usuario = state.get("email_usuario")
     fecha_final_cita = state.get("fecha_cita_final")
     cita_agendada_prev = state.get("cita_agendada") 
     
+    # Identificar si estamos en modo Re-Agendamiento
+    sheet_id_existente = state.get("sheet_unique_id")
+
     # Persistencia del motivo de rechazo
     motivo_nuevo = analisis.get("motivo_rechazo")
     motivo_previo = state.get("motivo_rechazo")
@@ -99,7 +106,7 @@ def gestionar_logica(state: LiaState):
     # -----------------------------------------------------------------
     # CASO ESPECIAL: Cita ya agendada -> CIERRE Y GUARDADO FINAL
     # -----------------------------------------------------------------
-    if cita_agendada_prev:
+    if cita_agendada_prev and not sheet_id_existente:
         datos_lead_extracted = analisis.get("datos_lead", {})
         hubo_actualizacion = False
         
@@ -117,7 +124,7 @@ def gestionar_logica(state: LiaState):
         info_final["email"] = email_usuario
         fecha_cita_guardar = state.get("fecha_cita_final")
         
-        tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_cita_guardar)
+        tools.guardar_lead_sheet(datos_lead, info_final, asesor_actual, fecha_cita_guardar)
 
         if hubo_actualizacion:
             instruccion = "[SISTEMA] Datos recibidos. Agradece, recuerda la fecha y despídete."
@@ -137,22 +144,44 @@ def gestionar_logica(state: LiaState):
     # FLUJO PRINCIPAL
     # -----------------------------------------------------------------
 
+    ya_intentamos_recuperar = state.get("recuperacion_aplicada", False)
+    es_rechazo_ia = analisis.get("es_rechazo")
+    
+    # LÓGICA DE "VIDA EXTRA": 
+    if es_rechazo_ia and not ya_intentamos_recuperar:
+        print("🛡️ ACTIVANDO ESCUDO DE RECUPERACIÓN (Primera negativa del usuario)")
+        analisis["es_rechazo"] = False
+        analisis["es_objecion_recuperable"] = True
+        state["recuperacion_aplicada"] = True 
+
     # A.1 RECHAZO DEFINITIVO
     if analisis.get("es_rechazo"):
-        motivo_final = motivo_actualizado if motivo_actualizado else "Desinterés"
+        motivo_final = motivo_actualizado if motivo_actualizado else "Desinterés / No especificado"
+        instruccion_cierre = "El usuario rechazó tajantemente. Ofrece disculpas y despídete amablemente."
+        
         tools.guardar_no_interesado_sheet(state["info_cliente"], motivo_final)
         return {
             "conversation_status": "finished",
             "motivo_rechazo": motivo_final,
-            "system_context_instruction": "El usuario rechazó tajantemente. Despídete."
+            "system_context_instruction": instruccion_cierre
         }
     
-    # A.2 OBJECIÓN RECUPERABLE
+    # A.2 OBJECIÓN / RECUPERACIÓN
     if analisis.get("es_objecion_recuperable"):
         contexto_extra = (
-            "\n[SISTEMA] EL USUARIO TIENE DUDAS. NO CIERRES EL CHAT.\n"
-            "INSTRUCCIÓN: Aplica la 'ESTRATEGIA DE RECUPERACIÓN'. Invítalo a vivir la experiencia Jelpit."
+            "\n[SISTEMA: El usuario presenta una objeción o desinterés inicial].\n"
+            "INSTRUCCIÓN OBLIGATORIA:\n"
+            "1. NO ACEPTES EL NO. Aplica la estrategia de 'Experiencia Jelpit'.\n"
+            "2. Menciona: Tarifas especiales, descuentos y gratuidad.\n"
+            "3. Intenta llevarlo a la cita de cotización."
         )
+        return {
+            "conversation_status": "continue", 
+            "recuperacion_aplicada": True,     
+            "datos_lead": datos_lead,
+            "motivo_rechazo": motivo_actualizado,
+            "system_context_instruction": contexto_extra
+        }
 
     # B. ACTUALIZAR DATOS
     datos_lead_extracted = analisis.get("datos_lead", {})
@@ -165,7 +194,7 @@ def gestionar_logica(state: LiaState):
     
     completos = datos_lead["inmuebles"] and datos_lead["fondo_validado"]
 
-    # C. FECHAS
+    # C. FECHAS (Aquí manejamos selección de asesor)
     intencion_fecha = analisis.get("intencion_fecha", {})
     nueva_fecha_detectada = False
     
@@ -176,8 +205,15 @@ def gestionar_logica(state: LiaState):
             nueva_fecha_detectada = True
             esperando_email = False 
             fecha_final_cita = None
-            if not asesor: asesor = tools.seleccionar_mejor_asesor(datos_lead)
-            msg_cupos, slots = tools.obtener_cupos_por_fecha(fecha_contexto, asesor)
+            
+            # SELECCIÓN DE ASESOR (Puede cambiar aquí)
+            if sheet_id_existente:
+                 print("🔄 Re-agendamiento: Re-evaluando mejor asesor...")
+                 asesor_actual = tools.seleccionar_mejor_asesor(datos_lead) 
+            elif not asesor_actual: 
+                 asesor_actual = tools.seleccionar_mejor_asesor(datos_lead)
+            
+            msg_cupos, slots = tools.obtener_cupos_por_fecha(fecha_contexto, asesor_actual)
             
             try:
                 dt_obj = datetime.strptime(fecha_iso, "%Y-%m-%d")
@@ -214,31 +250,58 @@ def gestionar_logica(state: LiaState):
     
     if esperando_email and not nueva_fecha_detectada:
         confirmado = False
-        
-        if regex_detected:
-            confirmado = True
-        elif info_email.get("es_confirmacion"):
-            confirmado = True
+        if regex_detected: confirmado = True
+        elif info_email.get("es_confirmacion"): confirmado = True
             
         if confirmado and fecha_final_cita:
-            evt = tools.crear_evento_calendar(asesor, email_usuario, state["info_cliente"]["nombre"], fecha_final_cita)
+            
+            # --- LÓGICA DE BORRADO DE EVENTO ANTERIOR (CORREGIDA) ---
+            if sheet_id_existente:
+                # ESTRATEGIA ROBUSTA: Buscamos el ID en dos lugares
+                old_meet_id = state.get("idMeet") 
+                
+                # Si no está en la raíz, lo buscamos dentro del objeto de cita anterior
+                if not old_meet_id and cita_agendada_prev:
+                    old_meet_id = cita_agendada_prev.get("id")
+                
+                asesor_para_borrar = asesor_original_para_borrado if asesor_original_para_borrado else asesor_actual
+                
+                if old_meet_id:
+                     print(f"🔄 Eliminando evento previo {old_meet_id} del calendario de {asesor_para_borrar}...")
+                     tools.eliminar_evento_calendar(old_meet_id, asesor_para_borrar)
+                else:
+                     print("⚠️ No se pudo recuperar el ID del evento anterior para borrar.")
+
+            # CREAR NUEVO EVENTO
+            evt = tools.crear_evento_calendar(asesor_actual, email_usuario, state["info_cliente"]["nombre"], fecha_final_cita)
             
             if evt:
                 info_final = state["info_cliente"].copy()
                 info_final["email"] = email_usuario
                 cita_agendada_data = evt
                 
-                if completos:
-                    tools.guardar_lead_sheet(datos_lead, info_final, asesor, fecha_final_cita)
+                # --- ACTUALIZACIÓN DE SHEET Y ESTADOS (CORREGIDO) ---
+                if sheet_id_existente:
+                    # CASO 1: Re-agendamiento (Siempre finaliza)
+                    print(f"🔄 Actualizando registro en Sheet ID: {sheet_id_existente}")
+                    tools.actualizar_cita_sheet(sheet_id_existente, fecha_final_cita, asesor_actual)
+                    status = "finished"
+                    contexto_extra = f"[SISTEMA] Cita RE-AGENDADA ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
+                
+                elif completos:
+                    # CASO 2: Nuevo Lead COMPLETO (Finaliza)
+                    tools.guardar_lead_sheet(datos_lead, info_final, asesor_actual, fecha_final_cita)
                     status = "finished"
                     contexto_extra = f"[SISTEMA] Cita creada ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
+                
                 else:
+                    # CASO 3: Nuevo Lead INCOMPLETO (Continúa y Pregunta)
                     status = "continue"
                     contexto_extra = (
                         f"\n[SISTEMA: ✅ Cita creada EXITOSAMENTE en Calendar]. "
                         f"INSTRUCCIÓN OBLIGATORIA (NO TE DESPIDAS): "
                         f"1. Confirma la cita y el envío a {email_usuario}. "
-                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el **fondo de imprevistos** supera los 45M?'"
+                        f"2. Di textualmente: 'Por cierto, antes de terminar, para completar tu perfil: ¿Cuántos inmuebles tiene el conjunto y el fondo de imprevistos supera los 45M?'"
                     )
                 
                 esperando_email = False
@@ -256,7 +319,7 @@ def gestionar_logica(state: LiaState):
     if fecha_contexto and not nueva_fecha_detectada and not esperando_email:
         if intencion_hora.get("menciona_hora"):
             hora_simple = intencion_hora.get("hora_simple") 
-            msg_cupos, slots_reales = tools.obtener_cupos_por_fecha(fecha_contexto, asesor)
+            msg_cupos, slots_reales = tools.obtener_cupos_por_fecha(fecha_contexto, asesor_actual)
             
             hora_valida = None
             posibles_formatos = []
@@ -296,7 +359,7 @@ def gestionar_logica(state: LiaState):
     return {
         "datos_lead": datos_lead,
         "fecha_cita_potencial": fecha_contexto,
-        "asesor_asignado": asesor,
+        "asesor_asignado": asesor_actual,
         "email_usuario": email_usuario,
         "esperando_confirmacion_email": esperando_email,
         "fecha_cita_final": fecha_final_cita,
@@ -327,7 +390,6 @@ def generar_respuesta(state: LiaState):
     except Exception as e:
         print(f"❌ Error Generando Respuesta (Gemini): {e}") # Log del error real
         traceback.print_exc()
-        # Mensaje amigable para el usuario
         text_resp = "Dame un momento, estoy verificando la información... ⏳"
     
     return {"messages": [{"role": "model", "parts": [text_resp]}], "system_context_instruction": ""}
