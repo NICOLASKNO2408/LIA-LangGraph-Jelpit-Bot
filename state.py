@@ -25,3 +25,5 @@ class LiaState(TypedDict):
     recuperacion_aplicada: bool
 
     sheet_unique_id: Optional[str]
+
+    session_id: Optional[str]

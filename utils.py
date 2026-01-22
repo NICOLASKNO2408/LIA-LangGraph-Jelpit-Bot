@@ -1,12 +1,13 @@
 import os
 import pytz
 import re
+import time # <--- IMPORTACIÓN NECESARIA PARA EL RETRY
 from datetime import datetime, timedelta
 from google import genai
 from google.genai import types
 from tools import limpiar_respuesta_json 
 
-# --- TEXTO DE BENEFICIOS (TU VERSIÓN DETALLADA ORIGINAL) ---
+# --- TEXTO DE BENEFICIOS (CON ESTRATEGIA DE RECUPERACIÓN ACTUALIZADA) ---
 TEXTO_BENEFICIOS = """
 ## 1. ¿QUÉ ES JELPIT CONJUNTOS?
 Somos el portafolio de recaudo de Davivienda que reúne la solución integral del recaudo identificado y simplifica la gestión del administrador con herramientas digitales claves.
@@ -58,7 +59,7 @@ Si el usuario dice "No me interesa", "Ya tengo banco" o "Es muy caro", USA ESTOS
 
 Si quieres profundizar, te puedo agendar una cita con un asesor para que te envíe una cotización acorde a tus necesidades y condiciones específicas del conjunto.
 
-Te invito a ver este brochure donde te explicamos todo a detalle: http://bit.ly/49GcPKr
+Te invito a ver este brochure donde te explicamos todo a detalle: https://bit.ly/4biPOOB
 
 ¿Deseas que agendemos?"
 """
@@ -99,16 +100,14 @@ Si el usuario pregunta o dice algo de lo siguiente, DEBES ADAPTAR ESTOS TEXTOS E
    ✅ Descuentos de hasta el 100% en medios de pago como tarjetas de crédito
    ✅ Acceso a plataforma Jelpit SIN COSTO para conciliación automáticas, reservas, comunicaciones y más
 
-   Te invito a ver este brochure donde te explicamos todo a detalle: http://bit.ly/49GcPKr
-
    Si quieres profundizar, te puedo agendar una cita con un asesor para que te envíe una cotización acorde a tus necesidades y condiciones especificas del conjunto.
 
-   ¿Deseas agendar?"
+   ¿Deseas agendar? 🗓️"
 
 📌 **REAGENDAMIENTO / CAMBIO DE CITA ("Reagendar", "Cambiar fecha", "No puedo asistir"):**
    "¡Entendido! No te preocupes, sé que los planes pueden cambiar. 😉
 
-   Cuéntame, ¿qué día te quedarían mejor para que reprogramemos nuestro espacio? Quedo muy atenta. 🗓️"
+   Cuéntame, ¿qué día y hora te quedarían mejor para que reprogramemos nuestro espacio? Quedo muy atenta. 🗓️"
 
 📌 **QUÉ ES / CONTINUACIÓN ("¿Qué es Jelpit?", "Cuéntame más", "Hola"):**
    "Somos el portafolio de recaudo de Davivienda que brinda a los administradores una nueva experiencia y facilidad en los pagos, recaudo y la gestión de las copropiedades.
@@ -122,16 +121,15 @@ Si el usuario pregunta o dice algo de lo siguiente, DEBES ADAPTAR ESTOS TEXTOS E
    3️⃣ Una vez se cree tu convenio de recuado se activará tu plataforma Jelpit donde tendrás un usuario para tu conjunto residencial, allí podrás visualizar todos los movimientos en línea, crear cuentas de cobro, crear nuevas referencias, configurar valores de pago y/o descuentos por pronto pago, generar informes personalizados.
    4️⃣ Podrás crear la cantidad de usuarios que tu conjunto necesite sin costo adicional.
    5️⃣ Generar QR de pagos personalizados de cada conjunto para que puedas compartir con los residentes y facilitar los pagos
+
    ¡Y mucho más!
 
-   Te invito a ver este brochure donde te explicamos todo a detalle: http://bit.ly/49GcPKr
-
-   ¿Quieres conocer más sobre Jelpit y sus beneficios?. Te invito a agendar una cita con un asesor."
+   ¿Quieres conocer más sobre Jelpit y sus beneficios?. Te invito a agendar una cita con un asesor.🗓️"
 
 📌 **RECHAZO / OBJECIÓN ("No me interesa", "Ya tengo proveedor"):**
    "Entiendo que para este momento no estés interesado, sin embargo, en Jelpit estaremos siempre disponibles para brindarte toda la información y atención necesaria por si decides a vincularte con nosotros. 💜
 
-   Te invito a ver este brochure donde te explicamos todo a detalle: http://bit.ly/49GcPKr
+   Te dejamos este brochure invitándote a vivir la experiencia Jelpit - Davivienda con información que puede ser de tu interés: https://bit.ly/4biPOOB
 
    Recuerda que en Jelpit te ofrecemos tarifas especiales y diferentes descuentos que se acomodan a tu conjunto, para ampliar esta información solo debes aceptar agendar una cita con un asesor que te contará todo lo relacionado a las condiciones específicas que requieras. ✨
 
@@ -218,10 +216,24 @@ def analizar_contexto_unificado(user_message: str, history_text: str, fecha_cont
         fecha_str = fecha_futura.strftime('%Y-%m-%d')
         tabla_fechas += f"- {nombre_dia}: {fecha_str}\n"
 
-    # --- CAMBIO CRÍTICO: LÓGICA DE INTENCIÓN CORREGIDA ---
-    instrucciones_datos = """
+    # --- CAMBIO CRÍTICO: INSTRUCCIONES BLINDADAS DE FECHA ---
+    instrucciones_datos = f"""
+    ESTADO ACTUAL: "esperando_email": {str(esperando_email).lower()}
+    
     PAUTAS DE ANÁLISIS:
-    1. CLASIFICACIÓN DE INTENCIÓN (CRÍTICO):
+    1. CONTEXTO DE CONFIRMACIÓN (PRIORIDAD MÁXIMA) ⚠️:
+       - SI "esperando_email" es true:
+         A. **PREGUNTA DE PRIVACIDAD / ORIGEN:** * Si pregunta "¿De dónde sacaron mi correo?", "¿Quién les dio mis datos?", "¿Cómo saben eso?":
+            -> "es_origen_datos": true (NUEVO CAMPO).
+            -> "confirmacion_email": {{ "es_confirmacion": false, "nuevo_email": null }}
+         
+         B. **NEGACIÓN / CAMBIO DE CORREO:**
+            * Si dice "no", "cambiar", "ese no es", "prefiero otro", "es otro", "está mal":
+            -> "es_origen_datos": false.
+            -> "confirmacion_email": {{ "es_confirmacion": false, "nuevo_email": null }}
+            -> INTERPRETACIÓN: El usuario quiere corregir el correo.
+
+    2. CLASIFICACIÓN DE INTENCIÓN (SOLO SI NO ESTÁS ESPERANDO EMAIL):
        A. **PREGUNTA INFORMATIVA (PRIORIDAD ALTA):** ⚠️
           - Si el usuario pregunta "¿Qué es?", "¿Cómo funciona?", "¿Qué precio tiene?", "¿Diferencias con otros?", "¿Detalles?", "¿De qué trata?", "¿Cuánto vale?":
           - **ACCIÓN:** "es_rechazo": false, "es_objecion_recuperable": false.
@@ -242,18 +254,25 @@ def analizar_contexto_unificado(user_message: str, history_text: str, fecha_cont
           - Si dice "reagendar", "cambiar cita", "reprogramar", "mover la fecha" o "mañana":
           - "es_rechazo": false (OBLIGATORIO). Esto es intención de cita.
 
-    2. DATOS COMPUESTOS (EJEMPLOS CLAVE):
+    3. DATOS COMPUESTOS (EJEMPLOS CLAVE):
        - Usuario: "tiene 5 inmuebles y si es mayor" -> "valor_inmuebles": 5, "respondio_fondo": true, "nivel_fondo": "mayor".
        - Usuario: "80 aptos y no alcanza" -> "valor_inmuebles": 80, "respondio_fondo": true, "nivel_fondo": "menor".
 
-    3. DATOS DEL LEAD (FONDO DE IMPREVISTOS) - COMPARACIÓN MATEMÁTICA ESTRICTA:
+    4. DATOS DEL LEAD (FONDO DE IMPREVISTOS) - COMPARACIÓN MATEMÁTICA ESTRICTA:
        - PUNTO DE CORTE: 45 Millones de pesos.
        - MENOR (< 45M): Si dice "1 millón", "10 millones", "20.000.000", "44 millones" -> "nivel_fondo": "menor".
        - MAYOR (>= 45M): Si dice "45 millones", "50 millones", "100 millones" -> "nivel_fondo": "mayor".
        - TEXTO: "Si", "cumple", "es alto" -> "mayor". / "No", "es bajo", "no tiene" -> "menor".
 
-    4. FECHAS Y HORAS (CRÍTICO):
+    5. FECHAS Y HORAS (MÁXIMA PRIORIDAD) ⚠️:
        - "menciona_fecha": true SOLO si propone un DÍA distinto al actual o al del contexto.
+       
+       - 📌 SELECCIÓN DE FECHA (OBLIGATORIO LEER TABLA):
+         * Cuando el usuario diga un día de la semana (ej: "Lunes", "Miércoles", "Próximo viernes"), NO CALCULES LA FECHA MENTALMENTE.
+         * BUSCA ese nombre de día en la lista "REFERENCIA INTERNA DE CALENDARIO" provista arriba.
+         * COPIA EXACTAMENTE la fecha ISO (YYYY-MM-DD) que aparece al lado de ese día.
+         * Ejemplo: Si la tabla dice "- Miércoles: 2026-01-14" y el usuario pide "miércoles", tu respuesta DEBE ser "2026-01-14". NO pongas la del jueves ni calcules nada.
+       
        - "menciona_hora": true si propone una HORA o PREGUNTA DISPONIBILIDAD de una hora específica.
          * Ejemplos: "a las 11", "2 pm", "¿tienes a las 10?", "¿es posible a la 1?", "mira a ver a las 9".
        - "hora_simple": Extrae SOLO la hora en formato militar aproximado (ej: "11:00", "14:00", "09:30"). NO incluyas fecha.
@@ -265,9 +284,9 @@ def analizar_contexto_unificado(user_message: str, history_text: str, fecha_cont
     HISTORIAL RECIENTE:
     {history_text}
     
-    CONTEXTO:
-    - Hoy: {dias_traduccion[now.weekday()]} {now.strftime('%Y-%m-%d')}
-    - Fecha Cita Activa: {fecha_contexto if fecha_contexto else "Ninguna"}
+    CONTEXTO TEMPORAL:
+    - HOY ES: {dias_traduccion[now.weekday()]} {now.strftime('%Y-%m-%d')} (Zona Horaria: Bogotá)
+    - Cita Actual: {fecha_contexto if fecha_contexto else "Ninguna"}
     
     {tabla_fechas}
     {instrucciones_datos}
@@ -276,6 +295,7 @@ def analizar_contexto_unificado(user_message: str, history_text: str, fecha_cont
     {{
         "es_rechazo": (bool),
         "es_objecion_recuperable": (bool),
+        "es_origen_datos": (bool),
         "motivo_rechazo": (str o null),
         "datos_lead": {{
             "tiene_inmuebles": (bool),
@@ -298,15 +318,24 @@ def analizar_contexto_unificado(user_message: str, history_text: str, fecha_cont
         }}
     }}
     """
-
-    try:
-        # MANTENEMOS TU MODELO ORIGINAL 2.0-LITE
-        resp = client.models.generate_content(
-            model="gemini-2.0-flash-lite-001", 
-            contents=prompt, 
-            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.0)
-        )
-        return limpiar_respuesta_json(resp.text)
-    except Exception as e:
-        print(f"⚠️ Error análisis unificado: {e}")
-        return {}
+    
+    # --- LOGICA DE REINTENTO (RETRY) PARA ANÁLISIS ---
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            resp = client.models.generate_content(
+                model="gemini-2.0-flash-lite-001", 
+                contents=prompt, 
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.0)
+            )
+            return limpiar_respuesta_json(resp.text)
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                print(f"⚠️ Alerta de Cuota (Análisis - 429). Reintentando en {2*(attempt+1)}s... (Intento {attempt+1}/{max_retries})")
+                time.sleep(2 * (attempt + 1)) # Espera progresiva: 2s, 4s, 6s...
+            else:
+                print(f"⚠️ Error análisis unificado: {e}")
+                return {} # Si no es 429, fallamos normal.
+    
+    return {} # Si se agotan los reintentos

@@ -1,5 +1,6 @@
 import re
 import os
+import time
 import traceback
 from datetime import datetime
 from langgraph.graph import StateGraph, START, END
@@ -75,6 +76,8 @@ def gestionar_logica(state: LiaState):
     analisis = state.get("analisis_temp", {}) 
     if not analisis: return {"system_context_instruction": "Error en análisis."}
 
+    current_session_id = state.get("session_id")
+
     # Desempaquetado
     datos_lead = state["datos_lead"].copy()
     fecha_contexto = state.get("fecha_cita_potencial")
@@ -113,10 +116,22 @@ def gestionar_logica(state: LiaState):
         if datos_lead_extracted.get("tiene_inmuebles"):
             datos_lead["inmuebles"] = str(datos_lead_extracted.get("valor_inmuebles"))
             hubo_actualizacion = True
+            
         if datos_lead_extracted.get("respondio_fondo"):
             datos_lead["fondo_validado"] = True
-            val = datos_lead_extracted.get("nivel_fondo", "")
-            datos_lead["nivel_fondo"] = "menor" if "menor" in val.lower() else "mayor"
+            
+            # --- AJUSTE 1: Validar NULL y asignar "Pendiente" sin romper ---
+            raw_fondo = datos_lead_extracted.get("nivel_fondo")
+            val = str(raw_fondo).lower() if raw_fondo else ""
+            
+            if "mayor" in val:
+                datos_lead["nivel_fondo"] = "mayor"
+            elif "menor" in val:
+                datos_lead["nivel_fondo"] = "menor"
+            else:
+                datos_lead["nivel_fondo"] = "Pendiente"
+            # ------------------------------------------------------------
+            
             hubo_actualizacion = True
         
         # Guardado obligatorio
@@ -124,7 +139,7 @@ def gestionar_logica(state: LiaState):
         info_final["email"] = email_usuario
         fecha_cita_guardar = state.get("fecha_cita_final")
         
-        tools.guardar_lead_sheet(datos_lead, info_final, asesor_actual, fecha_cita_guardar)
+        tools.guardar_lead_sheet(datos_lead, info_final, asesor_actual, fecha_cita_guardar, session_id=current_session_id)
 
         if hubo_actualizacion:
             instruccion = "[SISTEMA] Datos recibidos. Agradece, recuerda la fecha y despídete."
@@ -167,7 +182,7 @@ def gestionar_logica(state: LiaState):
         }
     
     # A.2 OBJECIÓN / RECUPERACIÓN
-    if analisis.get("es_objecion_recuperable"):
+    if analisis.get("es_objecion_recuperable") and not esperando_email:
         contexto_extra = (
             "\n[SISTEMA: El usuario presenta una objeción o desinterés inicial].\n"
             "INSTRUCCIÓN OBLIGATORIA:\n"
@@ -188,16 +203,20 @@ def gestionar_logica(state: LiaState):
     if datos_lead_extracted.get("tiene_inmuebles"):
         datos_lead["inmuebles"] = str(datos_lead_extracted.get("valor_inmuebles"))
     
-    # --- CORRECCIÓN DE ERROR "NoneType" TAMBIÉN AQUÍ ---
     if datos_lead_extracted.get("respondio_fondo"):
         datos_lead["fondo_validado"] = True
-        val = str(datos_lead_extracted.get("nivel_fondo") or "").lower()
+        
+        # --- AJUSTE 2: Validar NULL y asignar "Pendiente" sin romper ---
+        raw_fondo = datos_lead_extracted.get("nivel_fondo")
+        val = str(raw_fondo).lower() if raw_fondo else ""
         
         if "mayor" in val:
             datos_lead["nivel_fondo"] = "mayor"
-        else:
+        elif "menor" in val:
             datos_lead["nivel_fondo"] = "menor"
-    # ----------------------------------------------------
+        else:
+            datos_lead["nivel_fondo"] = "Pendiente"
+        # ------------------------------------------------------------
     
     completos = datos_lead["inmuebles"] and datos_lead["fondo_validado"]
 
@@ -254,15 +273,19 @@ def gestionar_logica(state: LiaState):
     # D. CONFIRMACIÓN EMAIL Y CREACIÓN CITA
     info_email = analisis.get("confirmacion_email", {})
     regex_detected = analisis.get("regex_detected", False)
+    es_origen_datos = analisis.get("es_origen_datos", False)
     
     if esperando_email and not nueva_fecha_detectada:
         confirmado = False
-        if regex_detected: confirmado = True
-        elif info_email.get("es_confirmacion"): confirmado = True
+
+        if regex_detected: 
+            confirmado = True
+        elif info_email.get("es_confirmacion") is True: 
+            confirmado = True
             
         if confirmado and fecha_final_cita:
             
-            # --- LÓGICA DE BORRADO DE EVENTO ANTERIOR (CORREGIDA) ---
+            # --- LÓGICA DE BORRADO DE EVENTO ANTERIOR ---
             if sheet_id_existente:
                 # ESTRATEGIA ROBUSTA: Buscamos el ID en dos lugares
                 old_meet_id = state.get("idMeet") 
@@ -296,7 +319,7 @@ def gestionar_logica(state: LiaState):
                     contexto_extra = f"[SISTEMA] Cita RE-AGENDADA ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
                 
                 elif completos:
-                    tools.guardar_lead_sheet(datos_lead, info_final, asesor_actual, fecha_final_cita)
+                    tools.guardar_lead_sheet(datos_lead, info_final, asesor_actual, fecha_final_cita, session_id=current_session_id)
                     status = "finished"
                     contexto_extra = f"[SISTEMA] Cita creada ID {evt['id']}. Despídete confirmando el envío a {email_usuario}."
                 
@@ -314,14 +337,29 @@ def gestionar_logica(state: LiaState):
             else:
                 contexto_extra = "\n[SISTEMA: Error creando cita (Calendar). Pide intentar de nuevo.]"
         else:
-             contexto_extra = (
-                 f"\n[SISTEMA: Debes confirmar el correo]. "
-                 f"PREGUNTA: '¿Tengo este correo para enviarte la invitación {email_usuario},es correcto o prefieres otro?'"
-             )
+             
+             if es_origen_datos:
+                 contexto_extra = (
+                     f"\n[SISTEMA: El usuario preguntó de dónde sacamos sus datos]. "
+                     f"INSTRUCCIÓN OBLIGATORIA: "
+                     f"1. Responde amablemente: 'En Jelpit contamos con bases de datos seguras de copropiedades y administradores para ofrecerte beneficios exclusivos.' "
+                     f"2. INMEDIATAMENTE RETOMA EL CIERRE: '¿te parece bien usar el correo {email_usuario} o prefieres otro?'"
+                 )
+
+             elif info_email.get("es_confirmacion") is False:
+                    contexto_extra = (
+                        f"\n[SISTEMA: El usuario indicó que el correo {email_usuario} NO es correcto o quiere cambiarlo]. "
+                        f"INSTRUCCIÓN: Di '¡Entendido! 👌 Hagamos el cambio de una vez para que no te pierdas de nada. ¿Me confirmas cuál es el correo ideal para enviarte la info? Así te llega en segundos ✨.'"
+                    )
+             else:
+                 contexto_extra = (
+                     f"\n[SISTEMA: Debes confirmar el correo antes de agendar]. "
+                     f"PREGUNTA: '¿Tengo este correo para enviarte la invitación: {email_usuario}? ¿Es correcto o prefieres otro?'"
+                 )
 
     # E. SELECCIÓN DE HORA
     intencion_hora = analisis.get("intencion_hora", {})
-    if fecha_contexto and not nueva_fecha_detectada and not esperando_email:
+    if fecha_contexto and not esperando_email:
         if intencion_hora.get("menciona_hora"):
             hora_simple = intencion_hora.get("hora_simple") 
             msg_cupos, slots_reales = tools.obtener_cupos_por_fecha(fecha_contexto, asesor_actual)
@@ -388,14 +426,25 @@ def generar_respuesta(state: LiaState):
     
     config = types.GenerateContentConfig(temperature=0.3, max_output_tokens=1024, system_instruction=system_instr)
     
-    try:
-        # Usamos 'client' (variable global ya inicializada)
-        resp = client.models.generate_content(model="gemini-2.0-flash-lite-001", contents=gemini_msgs, config=config)
-        text_resp = resp.text.replace("```", "").strip()
-    except Exception as e:
-        print(f"❌ Error Generando Respuesta (Gemini): {e}") # Log del error real
-        traceback.print_exc()
-        text_resp = "Dame un momento, estoy verificando la información... ⏳"
+    text_resp = "Dame un momento, estoy verificando la información... ⏳"
+    
+    # --- LÓGICA DE REINTENTO (RETRY) ---
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Usamos 'client' (variable global ya inicializada)
+            resp = client.models.generate_content(model="gemini-2.0-flash-lite-001", contents=gemini_msgs, config=config)
+            text_resp = resp.text.replace("```", "").strip()
+            break # Si funciona, salimos del bucle
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                print(f"⚠️ Alerta de Cuota (429). Reintentando en {2*(attempt+1)}s... (Intento {attempt+1}/{max_retries})")
+                time.sleep(2 * (attempt + 1)) # Espera progresiva: 2s, 4s, 6s...
+            else:
+                print(f"❌ Error Generando Respuesta (Gemini): {e}") # Log del error real
+                traceback.print_exc()
+                break # Si es otro error (no 429), no reintentamos
     
     return {"messages": [{"role": "model", "parts": [text_resp]}], "system_context_instruction": ""}
 

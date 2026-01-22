@@ -63,7 +63,8 @@ def get_empty_state() -> LiaState:
         "motivo_rechazo": None,
         "system_context_instruction": None,
         "analisis_temp": None,
-        "recuperacion_aplicada": False
+        "recuperacion_aplicada": False,
+        "session_id": None
     }
 
 def load_state_from_firestore(session_id: str) -> LiaState:
@@ -102,6 +103,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def start_chat_session(request: StartSessionRequest):
     try:
         state = get_empty_state()
+        state["session_id"] = request.session_id
         state["info_cliente"] = request.lead_data.model_dump()
         state["email_usuario"] = request.lead_data.email
         
@@ -119,7 +121,7 @@ async def start_chat_session(request: StartSessionRequest):
             
             Recuerda que en Jelpit te ofrecemos tarifas especiales y diferentes descuentos que se acomodan a tu conjunto.
             
-            Para ampliar esta información solo debes aceptar agendar una cita con un asesor que te contará todo lo relacionado a las condiciones específicas que requieras. ✨
+            Para ampliar esta información solo debes aceptar agendar una cita virtual con un asesor que te contará todo lo relacionado a las condiciones específicas que requieras. ✨
             
             ¿Hay algo puntual que te detenga (Otro proveedor, no estas buscando nada)?"
             """
@@ -133,8 +135,8 @@ async def start_chat_session(request: StartSessionRequest):
             TU INSTRUCCIÓN OBLIGATORIA DE INICIO:
             1. NO saludes con "Hola" (ya vienes hablando).
             2. Tu primera frase DEBE SER TEXTUALMENTE (puedes variar emojis): 
-               "¡Me encanta que estés interesado! 🌟 Te cuento que *Jelpit* es el ecosistema experto en propiedad horizontal del Banco Davivienda..."
-            3. Conecta explicando brevemente que Jelpit agrupa conciliación, pagos y beneficios.
+               "¡Que bueno que estés interesado! 🌟 Te cuento que Jelpit es la plataforma experta en propiedad horizontal del Banco Davivienda...."
+            3. Conecta explicando brevemente que "*Jelpit* agrupa la conciliación automática, facilidades de pago y beneficios exclusivos para tu conjunto. 💜".
             4. Cierra preguntando: "¿Te gustaría conocer más detalles o prefieres que miremos disponibilidad para una sesión virtual con uno de nuestros agentes especializados?"
             """
             state["recuperacion_aplicada"] = False
@@ -166,6 +168,7 @@ async def start_chat_session(request: StartSessionRequest):
 async def send_message(request: SendMessageRequest):
     try:
         state = load_state_from_firestore(request.session_id)
+        state["session_id"] = request.session_id
         state["messages"].append({"role": "user", "parts": [request.message]})
         
         final_state = app_graph.invoke(state)

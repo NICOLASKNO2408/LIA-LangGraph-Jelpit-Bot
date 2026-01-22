@@ -23,8 +23,8 @@ else:
     print("⚠️ No se detectó 'service_account.json'. Usando identidad por defecto (Cloud Run).")
 
 # --- CONFIGURACIÓN GOOGLE ---
-TOKEN_FILE = 'token.json'
-OAUTH_CREDENTIALS_FILE = 'credentials.json'
+TOKEN_FILE = os.getenv('TOKEN_FILE_PATH', 'token.json')
+OAUTH_CREDENTIALS_FILE = os.getenv('OAUTH_CREDENTIALS_PATH', 'credentials.json')
 SPREADSHEET_ID_ASESOR = "1effw7xHg2YAUbfaxl9_o94-KTXnSSCLI3HOAHOmqmMs" 
 SHEET_NAME_ASESOR = "Data"
 SPREADSHEET_ID_WAREHOUSE = "1ltTQcqNAinOQ3N2HHEgb1pbRJkc9Da3miBdlBsgfidE" 
@@ -86,7 +86,7 @@ def construir_fila_por_columnas(mapa_datos):
         fila[idx] = valor
     return fila
 
-def guardar_lead_sheet(datos_lead, info_cliente, asesor_asignado, fecha_cita):
+def guardar_lead_sheet(datos_lead, info_cliente, asesor_asignado, fecha_cita, session_id=None):
     print("\n💾 Iniciando proceso de guardado (Interesados)...")
     if not os.path.exists(TOKEN_FILE): return False
     try:
@@ -117,9 +117,10 @@ def guardar_lead_sheet(datos_lead, info_cliente, asesor_asignado, fecha_cita):
             'AD': info_cliente['telefono'],
             'AG': info_cliente['conjunto'],
             'AL': datos_lead.get('inmuebles') or "Pendiente", # Evita celdas vacías
-            'AM': datos_lead.get('nivel_fondo') or "Pendiente", # Evita celdas vacías
+            'BN': datos_lead.get('nivel_fondo') or "Pendiente", # Evita celdas vacías
             'D': asesor_asignado,
-            'BA': fecha_cita_formateada 
+            'BA': fecha_cita_formateada,
+            'BM': session_id or "Sin ID"
         }
         nueva_fila_lista = construir_fila_por_columnas(mapa_fila)
         sheet.append_row(nueva_fila_lista)

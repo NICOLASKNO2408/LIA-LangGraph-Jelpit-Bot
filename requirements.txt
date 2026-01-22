@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+pydantic
 python-dotenv
 google-cloud-firestore
 google-genai
@@ -7,5 +8,7 @@ langgraph
 gspread
 google-api-python-client
 google-auth
+google-auth-oauthlib
+google-auth-httplib2
 requests
 pytz
