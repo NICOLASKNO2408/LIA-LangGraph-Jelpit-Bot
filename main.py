@@ -23,7 +23,7 @@ except Exception as e:
     print(f"❌ Error conectando a Firestore: {e}")
     db = None
 
-app = FastAPI(title="LIA LangGraph API", version="2.9.1") # Versión Corrección Vida Extra
+app = FastAPI(title="LIA LangGraph API", version="2.9.1")
 
 class LeadData(BaseModel):
     nombre: str
@@ -200,7 +200,6 @@ async def reject_initial(request: RejectRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
     
-# ... (en main.py)
 
 @app.post("/chat/reschedule")
 async def reschedule_session(request: RescheduleRequest):

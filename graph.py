@@ -346,6 +346,12 @@ def gestionar_logica(state: LiaState):
                      f"2. INMEDIATAMENTE RETOMA EL CIERRE: '¿te parece bien usar el correo {email_usuario} o prefieres otro?'"
                  )
 
+             elif not email_usuario or "pendiente" in str(email_usuario).lower():
+                    contexto_extra = (
+                        f"\n[SISTEMA: Aún no tenemos el correo del usuario (Es '{email_usuario}')]. "
+                        f"INSTRUCCIÓN OBLIGATORIA: Di amablemente: 'Para poder agendarte y enviarte la invitación, es necesario que me escribas tu correo electrónico. 📧💜'"
+                    )
+
              elif info_email.get("es_confirmacion") is False:
                     contexto_extra = (
                         f"\n[SISTEMA: El usuario indicó que el correo {email_usuario} NO es correcto o quiere cambiarlo]. "
@@ -391,13 +397,26 @@ def gestionar_logica(state: LiaState):
 
             if hora_valida:
                 esperando_email = True
-                contexto_extra = (
-                    f"\n[SISTEMA: Hora {hora_valida} reservada exitosamente]. "
-                    f"INSTRUCCIÓN OBLIGATORIA: Responde usando EXACTAMENTE esta estructura: "
-                    f"'Muchas gracias por querer ser parte 💜\n"
-                    f"Tu sesión virtual quedó agendada para [Indica el día y la hora {hora_valida}] 🤩\n\n"
-                    f"Tengo este correo en nuestra base de datos: {email_usuario}, ¿es correcto o prefieres dejar información de otro?'"
-                )
+                if not email_usuario or "pendiente" in str(email_usuario).lower():
+                     contexto_extra = (
+                        f"\n[SISTEMA: Hora {hora_valida} reservada exitosamente, PERO NO TENEMOS EL CORREO]. "
+                        f"INSTRUCCIÓN OBLIGATORIA: Responde usando EXACTAMENTE esta estructura: "
+                        f"'Muchas gracias por querer ser parte 💜\n"
+                        f"Tu sesión virtual quedó agendada para [Indica el día y la hora {hora_valida}] 🤩\n\n"
+                        f"Para enviarte la invitación y el link de conexión, por favor confírmame tu correo electrónico. 📧'"
+                    )
+                else:
+                    # --- AQUÍ ESTÁ EL AJUSTE CLAVE ---
+                    contexto_extra = (
+                        f"\n[SISTEMA: Hora {hora_valida} reservada TEMPORALMENTE]. "
+                        f"INSTRUCCIÓN OBLIGATORIA DE FLUJO:"
+                        f"1. NO confirmes la cita definitivamente aún (falta validar email)."
+                        f"2. NO hagas preguntas de perfilamiento (inmuebles/fondo) todavía. "
+                        f"3. Responde usando EXACTAMENTE esta estructura: "
+                        f"'Muchas gracias por querer ser parte 💜\n"
+                        f"Tu sesión virtual quedó agendada para [Indica el día y la hora {hora_valida}] 🤩\n\n"
+                        f"Tengo este correo en nuestra base de datos: {email_usuario}, ¿es correcto o prefieres dejar información de otro?'"
+                    )
             else:
                 contexto_extra = f"\n[SISTEMA: Hora {hora_simple} ocupada. Disponibles: {slots_reales}]. Ofrece las disponibles."
 
