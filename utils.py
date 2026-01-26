@@ -59,7 +59,7 @@ Si el usuario dice "No me interesa", "Ya tengo banco" o "Es muy caro", USA ESTOS
 
 Si quieres profundizar, te puedo agendar una cita con un asesor para que te envíe una cotización acorde a tus necesidades y condiciones específicas del conjunto.
 
-Te invito a ver este brochure donde te explicamos todo a detalle: https://bit.ly/4biPOOB
+Te invito a ver este brochure donde te explicamos todo a detalle: https://bit.ly/3Lt6Wqo
 
 ¿Deseas que agendemos?"
 """
@@ -129,7 +129,7 @@ Si el usuario pregunta o dice algo de lo siguiente, DEBES ADAPTAR ESTOS TEXTOS E
 📌 **RECHAZO / OBJECIÓN ("No me interesa", "Ya tengo proveedor"):**
    "Entiendo que para este momento no estés interesado, sin embargo, en Jelpit estaremos siempre disponibles para brindarte toda la información y atención necesaria por si decides a vincularte con nosotros. 💜
 
-   Te dejamos este brochure invitándote a vivir la experiencia Jelpit - Davivienda con información que puede ser de tu interés: https://bit.ly/4biPOOB
+   Te dejamos este brochure invitándote a vivir la experiencia Jelpit - Davivienda con información que puede ser de tu interés: https://bit.ly/3Lt6Wqo
 
    Recuerda que en Jelpit te ofrecemos tarifas especiales y diferentes descuentos que se acomodan a tu conjunto, para ampliar esta información solo debes aceptar agendar una cita con un asesor que te contará todo lo relacionado a las condiciones específicas que requieras. ✨
 
@@ -198,7 +198,18 @@ Si el usuario pregunta o dice algo de lo siguiente, DEBES ADAPTAR ESTOS TEXTOS E
 """
 
 def analizar_contexto_unificado(user_message: str, history_text: str, fecha_contexto: str, email_actual: str, esperando_email: bool, project_id: str, location: str, client_existente=None):
-    
+    if '{"' in user_message and '"r":"249"' in user_message:
+        print("🚨 DETECTADO PAYLOAD DE RECHAZO (BOTÓN NO ME INTERESA)")
+        return {
+            "es_rechazo": True,
+            "es_objecion_recuperable": False, # Es un rechazo de botón, suele ser final o requiere script de cierre
+            "es_origen_datos": False,
+            "motivo_rechazo": "Clic Botón No Me Interesa",
+            "datos_lead": {"tiene_inmuebles": False, "valor_inmuebles": None, "respondio_fondo": False, "nivel_fondo": None},
+            "intencion_fecha": {"menciona_fecha": False, "fecha_iso": None, "nombre_dia": None},
+            "intencion_hora": {"menciona_hora": False, "hora_simple": None},
+            "confirmacion_email": {"es_confirmacion": False, "nuevo_email": None}
+        }
     # OPTIMIZACIÓN: Si nos pasan el cliente (desde graph.py), lo usamos.
     if client_existente:
         client = client_existente
