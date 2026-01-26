@@ -367,35 +367,46 @@ def gestionar_logica(state: LiaState):
     intencion_hora = analisis.get("intencion_hora", {})
     if fecha_contexto and not esperando_email:
         if intencion_hora.get("menciona_hora"):
-            hora_simple = intencion_hora.get("hora_simple") 
+            hora_raw = str(intencion_hora.get("hora_simple", "")).strip()
             msg_cupos, slots_reales = tools.obtener_cupos_por_fecha(fecha_contexto, asesor_actual)
             
             hora_valida = None
-            posibles_formatos = []
+            
             try:
-                base_dt = datetime.strptime(fecha_contexto, "%Y-%m-%d")
-                hora_dt = datetime.strptime(hora_simple, "%H:%M")
-                fecha_completa_dt = base_dt.replace(hour=hora_dt.hour, minute=hora_dt.minute)
-                slot_usuario = fecha_completa_dt.strftime('%I:%M %p').lower()
-                posibles_formatos.append(slot_usuario)
-                if "am" in slot_usuario: posibles_formatos.append(slot_usuario.replace("am", "pm"))
-                else: posibles_formatos.append(slot_usuario.replace("pm", "am"))
-            except: pass
-
-            for slot_candidato in posibles_formatos:
-                if slot_candidato in slots_reales:
-                    hora_valida = slot_candidato
-                    is_pm = "pm" in hora_valida
-                    parts = hora_valida.replace("am","").replace("pm","").strip().split(":")
-                    h = int(parts[0])
-                    m = int(parts[1])
-                    if is_pm and h != 12: h += 12
-                    if not is_pm and h == 12: h = 0
-                    dt_final = datetime.strptime(fecha_contexto, "%Y-%m-%d").replace(hour=h, minute=m)
-                    fecha_final_cita = dt_final.isoformat()
-                    break
+                # 1. Extraer solo el número si la IA mandó algo raro
+                solo_digitos = re.findall(r'\d+', hora_raw)
+                if solo_digitos:
+                    h = int(solo_digitos[0])
+                    m = int(solo_digitos[1]) if len(solo_digitos) > 1 else 0
+                    
+                    h_12 = h if h <= 12 else h - 12
+                    if h_12 == 0: h_12 = 12
+                    
+                    opcion_am = f"{h_12:02d}:{m:02d} am"
+                    opcion_pm = f"{h_12:02d}:{m:02d} pm"
+                    
+                    # Prioridad: Si h es pequeño (1-6), probamos PM primero
+                    orden_busqueda = [opcion_pm, opcion_am] if 1 <= h_12 <= 6 else [opcion_am, opcion_pm]
+                    
+                    for candidate in orden_busqueda:
+                        if candidate in slots_reales:
+                            hora_valida = candidate
+                            break
+            except Exception as e:
+                print(f"⚠️ Error procesando hora_raw {hora_raw}: {e}")
 
             if hora_valida:
+                # Convertir hora_valida (ej: "03:00 pm") a ISO para guardar
+                is_pm = "pm" in hora_valida
+                parts = hora_valida.replace("am","").replace("pm","").strip().split(":")
+                h_f = int(parts[0])
+                m_f = int(parts[1])
+                if is_pm and h_f != 12: h_f += 12
+                if not is_pm and h_f == 12: h_f = 0
+                
+                dt_final = datetime.strptime(fecha_contexto, "%Y-%m-%d").replace(hour=h_f, minute=m_f)
+                fecha_final_cita = dt_final.isoformat()
+
                 esperando_email = True
                 if not email_usuario or "pendiente" in str(email_usuario).lower():
                      contexto_extra = (
@@ -418,7 +429,13 @@ def gestionar_logica(state: LiaState):
                         f"Tengo este correo en nuestra base de datos: {email_usuario}, ¿es correcto o prefieres dejar información de otro?'"
                     )
             else:
-                contexto_extra = f"\n[SISTEMA: Hora {hora_simple} ocupada. Disponibles: {slots_reales}]. Ofrece las disponibles."
+                fecha_final_cita = None
+                esperando_email = False
+                contexto_extra = (f"\n[SISTEMA: El usuario pidió las '{hora_raw}', pero NO ESTÁ DISPONIBLE. "
+                    f"Cupos reales: {slots_reales}]. "
+                    f"INSTRUCCIÓN OBLIGATORIA: 1. NO confirmes ninguna cita. "
+                    f"2. Dile explícitamente que a las {hora_raw} no hay disponibilidad. "
+                    f"3. Ofrece nuevamente las opciones de la lista: {slots_reales}.")
 
     return {
         "datos_lead": datos_lead,

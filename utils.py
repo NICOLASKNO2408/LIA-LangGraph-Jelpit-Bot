@@ -284,9 +284,15 @@ def analizar_contexto_unificado(user_message: str, history_text: str, fecha_cont
          * COPIA EXACTAMENTE la fecha ISO (YYYY-MM-DD) que aparece al lado de ese día.
          * Ejemplo: Si la tabla dice "- Miércoles: 2026-01-14" y el usuario pide "miércoles", tu respuesta DEBE ser "2026-01-14". NO pongas la del jueves ni calcules nada.
        
-       - "menciona_hora": true si propone una HORA o PREGUNTA DISPONIBILIDAD de una hora específica.
-         * Ejemplos: "a las 11", "2 pm", "¿tienes a las 10?", "¿es posible a la 1?", "mira a ver a las 9".
-       - "hora_simple": Extrae SOLO la hora en formato militar aproximado (ej: "11:00", "14:00", "09:30"). NO incluyas fecha.
+       - "menciona_hora": true si propone una HORA específica (ej: "a las 3", "2pm", "10:30").
+       
+       - "hora_simple": 
+         * REGLA ANTI-ERROR: Bajo ninguna circunstancia selecciones una hora de la lista basándote en la posición (1ero, 2do, 3ero).
+         * Si el usuario pide una hora que no estaba en el último mensaje del AGENTE LIA, marca "menciona_hora": true y extrae la hora, pero el sistema validará la disponibilidad.
+         * Si el usuario dice "3", "a las 3" o "la de las 3", extrae "15:00".
+         * Si el usuario dice "10", extrae "10:00".
+         * Si el usuario dice "1", extrae "13:00".
+         * Retorna SIEMPRE en formato militar HH:MM.
     """
 
     prompt = f"""
