@@ -44,6 +44,9 @@ class RejectRequest(BaseModel):
     lead_data: LeadData
     reason: str = "Clic Botón Inicial - No Interesa"
 
+class HabeasCheckRequest(BaseModel):
+    user_message: str
+
 class RescheduleRequest(BaseModel):
     session_id: str
     sheet_unique_id: str
@@ -135,7 +138,7 @@ async def start_chat_session(request: StartSessionRequest):
             TU INSTRUCCIÓN OBLIGATORIA DE INICIO:
             1. NO saludes con "Hola" (ya vienes hablando).
             2. Tu primera frase DEBE SER TEXTUALMENTE (puedes variar emojis): 
-               "¡Que bueno que estés interesado! 🌟 Te cuento que Jelpit es la plataforma experta en propiedad horizontal del Banco Davivienda...."
+               "¡Que bueno que estés interesado! 🌟 Te cuento que Jelpit es la plataforma experta en propiedad horizontal del Banco Davivienda."
             3. Conecta explicando brevemente que "*Jelpit* agrupa la conciliación automática, facilidades de pago y beneficios exclusivos para tu conjunto. 💜".
             4. Cierra preguntando: "¿Te gustaría conocer más detalles o prefieres que miremos disponibilidad para una sesión virtual con uno de nuestros agentes especializados?"
             """
@@ -192,13 +195,30 @@ async def send_message(request: SendMessageRequest):
         }
 
 @app.post("/chat/reject")
-async def reject_initial(request: RejectRequest):
+async def reject_lead(request: RejectRequest):
     try:
         info_cliente = request.lead_data.model_dump()
-        tools.guardar_no_interesado_sheet(info_cliente, request.reason)
-        return {"status": "rejected", "message": "Rechazo guardado"}
+        
+        exito = tools.guardar_no_interesado_sheet(info_cliente, request.reason)
+        
+        if exito:
+            return {"status": "success", "message": f"Lead rechazado por: {request.reason}"}
+        else:
+            return {"status": "error", "message": "No se pudo registrar en Sheets"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/chat/validate-habeas")
+async def validate_habeas(request: HabeasCheckRequest):
+    mensaje = request.user_message.strip().upper() # Convertimos a MAYÚSCULAS para comparar
+    
+    if mensaje == "AUTORIZO":
+        return {"decision": "CONTINUE"}
+    elif mensaje == "NO AUTORIZO":
+        return {"decision": "REJECT"}
+    else:
+        return {"decision": "RETRY"}
     
 
 @app.post("/chat/reschedule")
